@@ -27,7 +27,7 @@ defmodule Exint.MCP.Server do
       }
     },
     %{
-      name: "definition",
+      name: "function_definition",
       description: "Find where a function is defined. Returns file path, line numbers, visibility (public/private), and whether it's a macro.",
       inputSchema: %{
         type: "object",
@@ -41,7 +41,7 @@ defmodule Exint.MCP.Server do
       }
     },
     %{
-      name: "references",
+      name: "function_references",
       description: "Find all call sites for a function. Returns file, line, and calling function for each location where the function is invoked.",
       inputSchema: %{
         type: "object",
@@ -55,7 +55,7 @@ defmodule Exint.MCP.Server do
       }
     },
     %{
-      name: "callers",
+      name: "function_callers",
       description: "Find functions that call a given function (traverse up the call graph). Use depth=1 for direct callers, depth=2+ for transitive callers. Good for impact analysis.",
       inputSchema: %{
         type: "object",
@@ -73,7 +73,7 @@ defmodule Exint.MCP.Server do
       }
     },
     %{
-      name: "callees",
+      name: "function_callees",
       description: "Find functions called by a given function (traverse down the call graph). Use depth=1 for direct calls, depth=2+ for transitive dependencies.",
       inputSchema: %{
         type: "object",
@@ -305,21 +305,21 @@ defmodule Exint.MCP.Server do
     end
   end
 
-  defp execute_tool("definition", %{"mfa" => mfa}, state) do
+  defp execute_tool("function_definition", %{"mfa" => mfa}, state) do
     Exint.Query.execute(:def, %{mfa: mfa}, project_root: state.project_path)
   end
 
-  defp execute_tool("references", %{"mfa" => mfa}, state) do
+  defp execute_tool("function_references", %{"mfa" => mfa}, state) do
     Exint.Query.execute(:refs, %{mfa: mfa}, project_root: state.project_path)
   end
 
-  defp execute_tool("callers", args, state) do
+  defp execute_tool("function_callers", args, state) do
     mfa = Map.get(args, "mfa")
     depth = Map.get(args, "depth", 1)
     Exint.Query.execute(:callers, %{mfa: mfa, depth: depth}, project_root: state.project_path)
   end
 
-  defp execute_tool("callees", args, state) do
+  defp execute_tool("function_callees", args, state) do
     mfa = Map.get(args, "mfa")
     depth = Map.get(args, "depth", 1)
     Exint.Query.execute(:callees, %{mfa: mfa, depth: depth}, project_root: state.project_path)
