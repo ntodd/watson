@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "exint": {
+      "command": "mix",
+      "args": ["exint.mcp"],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}
