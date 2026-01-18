@@ -183,6 +183,16 @@ defmodule Exint.QueryTest do
 
       assert result == []
     end
+
+    test "includes local/private function calls within same module" do
+      # CoreComponents.flash calls CoreComponents.icon (same module)
+      {:ok, result} = Query.execute(:callees, %{mfa: "TestProjectWeb.CoreComponents.flash/1", depth: 1}, project_root: @test_project_path)
+
+      callee_mfas = Enum.map(result, & &1.mfa)
+
+      # Should include the local call to icon/1
+      assert Enum.any?(callee_mfas, &String.contains?(&1, "CoreComponents.icon"))
+    end
   end
 
   describe "query_impact/2" do

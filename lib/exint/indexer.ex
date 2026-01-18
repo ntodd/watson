@@ -209,6 +209,16 @@ defmodule Exint.Indexer do
         record_call(meta, module, name, arity, env)
       end
 
+      def trace({:local_function, meta, name, arity}, env) do
+        # Local function - callee is in the same module as caller
+        record_call(meta, env.module, name, arity, env)
+      end
+
+      def trace({:local_macro, meta, name, arity}, env) do
+        # Local macro - callee is in the same module as caller
+        record_call(meta, env.module, name, arity, env)
+      end
+
       def trace({:struct_expansion, _meta, module, _keys}, env) do
         if Process.whereis(__MODULE__) && env.module do
           Agent.update(__MODULE__, fn events ->
