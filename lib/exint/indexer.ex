@@ -12,7 +12,6 @@ defmodule Exint.Indexer do
 
   alias Exint.Extractors.{
     AstExtractor,
-    CompilerTracer,
     XrefExtractor,
     PhoenixExtractor,
     EctoExtractor
@@ -93,33 +92,197 @@ defmodule Exint.Indexer do
   end
 
   defp run_compiler_tracing(project_root) do
+    # Compiler tracing requires running within the target project
+    # We write a tracer module to a temp file that gets loaded via mix.exs compiler config
+    abs_path = Path.expand(project_root)
+    output_file = Path.join(abs_path, ".exint_tracer_output.json")
+    tracer_file = Path.join(abs_path, ".exint_tracer.ex")
+    runner_file = Path.join(abs_path, ".exint_runner.exs")
+
     try do
-      # Start the tracer
-      CompilerTracer.start()
+      # Delete any previous output
+      File.rm(output_file)
 
-      # Run compilation with tracer
-      prev_dir = File.cwd!()
+      # Write tracer module
+      File.write!(tracer_file, tracer_module_code(output_file))
 
-      try do
-        File.cd!(project_root)
+      # Write runner script
+      File.write!(runner_file, runner_script_code(tracer_file))
 
-        # Set the tracer and compile
-        Mix.Task.run("compile", ["--force", "--tracer", "Exint.Extractors.CompilerTracer"])
-      after
-        File.cd!(prev_dir)
+      IO.puts("  Running compiler tracer in #{abs_path}...")
+
+      # Clean the project's compiled output to force recompilation
+      build_dir = Path.join(abs_path, "_build/dev/lib")
+      project_name = get_project_name(Path.join(abs_path, "mix.exs"))
+      project_build = Path.join(build_dir, to_string(project_name))
+      File.rm_rf(project_build)
+
+      # Run the tracer
+      {output, exit_code} = System.cmd("elixir", [runner_file],
+        cd: abs_path,
+        env: [{"MIX_ENV", "dev"}],
+        stderr_to_stdout: true
+      )
+
+      # Cleanup temp files
+      File.rm(tracer_file)
+      File.rm(runner_file)
+
+      if exit_code != 0 do
+        IO.puts("  Compiler tracing warning: #{String.slice(output, 0, 500)}")
       end
 
-      # Get events and convert to records
-      events = CompilerTracer.stop()
-      CompilerTracer.events_to_records(events)
+      # Read the tracer output
+      case File.read(output_file) do
+        {:ok, content} ->
+          File.rm(output_file)
+          case Jason.decode(content) do
+            {:ok, data} ->
+              calls = Enum.map(data["calls"] || [], &decode_call_ref/1)
+              edges = Enum.map(data["edges"] || [], &decode_xref_edge/1)
+              IO.puts("  Captured #{length(calls)} calls, #{length(edges)} edges")
+              %{calls: calls, edges: edges, compile_envs: []}
+            {:error, _} ->
+              IO.puts("  Warning: Could not parse tracer output")
+              %{calls: [], edges: [], compile_envs: []}
+          end
+        {:error, _} ->
+          IO.puts("  Warning: No tracer output generated")
+          %{calls: [], edges: [], compile_envs: []}
+      end
     rescue
       e ->
-        IO.puts("Compiler tracing failed: #{inspect(e)}")
-        %{calls: [], edges: []}
-    catch
-      :exit, _ ->
-        %{calls: [], edges: []}
+        IO.puts("  Compiler tracing failed: #{Exception.message(e)}")
+        File.rm(tracer_file)
+        File.rm(runner_file)
+        %{calls: [], edges: [], compile_envs: []}
     end
+  end
+
+  defp tracer_module_code(output_file) do
+    """
+    defmodule ExintTracer do
+      @output_file "#{output_file}"
+
+      def start do
+        Agent.start_link(fn -> [] end, name: __MODULE__)
+      end
+
+      def stop do
+        events = Agent.get(__MODULE__, & &1)
+        Agent.stop(__MODULE__)
+        events
+      end
+
+      def write_output(events) do
+        calls = events
+          |> Enum.filter(& &1.type == :call)
+          |> Enum.filter(& &1.line > 1)
+          |> Enum.map(fn e ->
+            caller = if e.caller_fn, do: "\#{inspect(e.caller_mod)}.\#{elem(e.caller_fn, 0)}/\#{elem(e.caller_fn, 1)}", else: inspect(e.caller_mod)
+            callee = "\#{inspect(e.callee_mod)}.\#{e.callee_name}/\#{e.callee_arity}"
+            %{caller: caller, callee: callee, file: e.file, line: e.line}
+          end)
+          |> Enum.reject(fn c ->
+            String.starts_with?(c.callee, "Kernel.") ||
+            String.starts_with?(c.callee, "Module.") ||
+            String.starts_with?(c.callee, ":erlang.") ||
+            String.starts_with?(c.callee, "Phoenix.Component.Declarative.") ||
+            String.starts_with?(c.callee, "Phoenix.Template.")
+          end)
+          |> Enum.uniq_by(& {&1.file, &1.line})
+
+        edges = events
+          |> Enum.filter(& &1.type in [:struct, :require])
+          |> Enum.map(fn e -> %{from: inspect(e.from), to: inspect(e.to), type: Atom.to_string(e.type)} end)
+          |> Enum.uniq()
+
+        output = Jason.encode!(%{calls: calls, edges: edges})
+        File.write!(@output_file, output)
+      end
+
+      def trace({:remote_function, meta, module, name, arity}, env) do
+        record_call(meta, module, name, arity, env)
+      end
+
+      def trace({:imported_function, meta, module, name, arity}, env) do
+        record_call(meta, module, name, arity, env)
+      end
+
+      def trace({:struct_expansion, _meta, module, _keys}, env) do
+        if Process.whereis(__MODULE__) && env.module do
+          Agent.update(__MODULE__, fn events ->
+            [%{type: :struct, from: env.module, to: module} | events]
+          end)
+        end
+        :ok
+      end
+
+      def trace({:require, _meta, module, _opts}, env) do
+        if Process.whereis(__MODULE__) && env.module do
+          Agent.update(__MODULE__, fn events ->
+            [%{type: :require, from: env.module, to: module} | events]
+          end)
+        end
+        :ok
+      end
+
+      def trace(_, _), do: :ok
+
+      defp record_call(meta, module, name, arity, env) do
+        if Process.whereis(__MODULE__) && env.module do
+          Agent.update(__MODULE__, fn events ->
+            [%{type: :call, caller_mod: env.module, caller_fn: env.function,
+               callee_mod: module, callee_name: name, callee_arity: arity,
+               file: env.file, line: Keyword.get(meta, :line, 0)} | events]
+          end)
+        end
+        :ok
+      end
+    end
+    """
+  end
+
+  defp runner_script_code(tracer_file) do
+    """
+    # Load the tracer module first
+    Code.compile_file("#{tracer_file}")
+
+    # Start the tracer
+    ExintTracer.start()
+
+    # Compile with the tracer
+    Mix.start()
+    Mix.shell(Mix.Shell.Quiet)
+    Code.compile_file("mix.exs")
+    Mix.Task.run("deps.loadpaths", ["--no-compile"])
+    Mix.Task.run("compile", ["--force", "--tracer", "ExintTracer"])
+
+    # Save results
+    events = ExintTracer.stop()
+    ExintTracer.write_output(events)
+    """
+  end
+
+  defp get_project_name(mix_file) do
+    case File.read(mix_file) do
+      {:ok, content} ->
+        case Regex.run(~r/app:\s*:(\w+)/, content) do
+          [_, name] -> String.to_atom(name)
+          _ -> :target_project
+        end
+      _ -> :target_project
+    end
+  end
+
+  defp decode_call_ref(data) do
+    alias Exint.Records.CallRef
+    CallRef.new(data["caller"], data["callee"], data["file"], data["line"])
+  end
+
+  defp decode_xref_edge(data) do
+    alias Exint.Records.XrefEdge
+    XrefEdge.new(data["from"], data["to"], String.to_atom(data["type"]))
   end
 
   defp collect_records(ast_result, compiler_result, xref_result, routes, schemas) do

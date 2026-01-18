@@ -207,6 +207,38 @@ defmodule Exint.Extractors.CompilerTracer do
     :ok
   end
 
+  def trace({:import, _meta, module, _opts}, env) do
+    if Process.whereis(__MODULE__) do
+      event = %{
+        type: :import,
+        caller_module: env.module,
+        imported_module: module,
+        file: env.file
+      }
+
+      Agent.update(__MODULE__, &[event | &1])
+    end
+
+    :ok
+  end
+
+  def trace({:compile_env, app, path, return}, env) do
+    if Process.whereis(__MODULE__) do
+      event = %{
+        type: :compile_env,
+        module: env.module,
+        app: app,
+        path: path,
+        value: return,
+        file: env.file
+      }
+
+      Agent.update(__MODULE__, &[event | &1])
+    end
+
+    :ok
+  end
+
   def trace(_event, _env), do: :ok
 
   @doc """
@@ -215,18 +247,23 @@ defmodule Exint.Extractors.CompilerTracer do
   def events_to_records(events) do
     calls =
       events
-      |> Enum.filter(&(&1.type in [:remote_call, :remote_macro, :imported_call, :imported_macro]))
+      |> Enum.filter(&(&1.type in [:remote_call, :remote_macro, :imported_call, :imported_macro, :local_call, :local_macro]))
       |> Enum.map(&event_to_call_ref/1)
       |> Enum.reject(&is_nil/1)
 
     edges =
       events
-      |> Enum.filter(&(&1.type in [:require, :alias_reference, :struct_expansion]))
+      |> Enum.filter(&(&1.type in [:require, :alias_reference, :struct_expansion, :import]))
       |> Enum.map(&event_to_xref_edge/1)
       |> Enum.reject(&is_nil/1)
       |> Enum.uniq()
 
-    %{calls: calls, edges: edges}
+    compile_envs =
+      events
+      |> Enum.filter(&(&1.type == :compile_env))
+      |> Enum.uniq_by(&{&1.app, &1.path})
+
+    %{calls: calls, edges: edges, compile_envs: compile_envs}
   end
 
   defp event_to_call_ref(event) do
@@ -235,7 +272,14 @@ defmodule Exint.Extractors.CompilerTracer do
       nil
     else
       caller_mfa = format_mfa(event.caller_module, event.caller_function)
-      callee_mfa = "#{inspect(event.callee_module)}.#{event.callee_name}/#{event.callee_arity}"
+
+      # Local calls don't have callee_module
+      callee_mfa =
+        if event.type in [:local_call, :local_macro] do
+          "#{inspect(event.caller_module)}.#{event.callee_name}/#{event.callee_arity}"
+        else
+          "#{inspect(event.callee_module)}.#{event.callee_name}/#{event.callee_arity}"
+        end
 
       cond do
         # No caller info
@@ -291,6 +335,14 @@ defmodule Exint.Extractors.CompilerTracer do
     XrefEdge.new(
       inspect(event.caller_module),
       inspect(event.struct_module),
+      :compile
+    )
+  end
+
+  defp event_to_xref_edge(%{type: :import} = event) do
+    XrefEdge.new(
+      inspect(event.caller_module),
+      inspect(event.imported_module),
       :compile
     )
   end
