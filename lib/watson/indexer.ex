@@ -140,9 +140,10 @@ defmodule Watson.Indexer do
     # Compiler tracing requires running within the target project
     # We write a tracer module to a temp file that gets loaded via mix.exs compiler config
     abs_path = Path.expand(project_root)
-    output_file = Path.join(abs_path, ".watson_tracer_output.json")
-    tracer_file = Path.join(abs_path, ".watson_tracer.ex")
-    runner_file = Path.join(abs_path, ".watson_runner.exs")
+    unique_id = :erlang.unique_integer([:positive])
+    output_file = Path.join(abs_path, ".watson_tracer_output_#{unique_id}.json")
+    tracer_file = Path.join(abs_path, ".watson_tracer_#{unique_id}.ex")
+    runner_file = Path.join(abs_path, ".watson_runner_#{unique_id}.exs")
 
     try do
       # Delete any previous output
@@ -425,7 +426,7 @@ defmodule Watson.Indexer do
     # Use file + line + callee as the unique key for a call site
     # This ensures different function calls on the same line are preserved
     # Normalize file path for comparison
-    file = record.file |> Path.basename()
+    file = record.file |> Path.expand()
     line = record.span[:line] || record.span.line
     callee = record.callee
     {file, line, callee}
@@ -563,12 +564,18 @@ defmodule Watson.Indexer do
         # Phase 5: Ecto schemas
         schemas = EctoExtractor.extract_schemas(files_to_reindex)
 
-        # Collect new records (without compiler tracing for speed)
+        # Phase 2: Compiler tracing for accurate call refs
+        compiler_result = run_compiler_tracing(project_root)
+
+        # Phase 3: Refresh xref edges for updated dependency graph
+        xref_result = XrefExtractor.extract(project_root)
+
+        # Collect new records
         new_records =
           collect_records(
             ast_result,
-            %{calls: [], edges: [], compile_envs: []},
-            %{calls: [], edges: []},
+            compiler_result,
+            xref_result,
             routes,
             schemas
           )
@@ -581,7 +588,7 @@ defmodule Watson.Indexer do
         all_files = find_source_files(project_root)
         {:ok, old_states} = Store.read_file_states(project_root)
         {:ok, old_module_files} = Store.read_module_files(project_root)
-        {:ok, old_dependencies} = Store.read_dependencies(project_root)
+        new_dependencies = build_dependencies(xref_result.edges || [])
 
         # Update file states for changed files
         new_states =
@@ -631,7 +638,7 @@ defmodule Watson.Indexer do
           record_count: length(all_records),
           file_states: new_states,
           module_files: new_module_files,
-          dependencies: old_dependencies
+          dependencies: new_dependencies
         )
 
         {:ok, :updated, length(new_records)}

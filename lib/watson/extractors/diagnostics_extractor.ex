@@ -100,8 +100,9 @@ defmodule Watson.Extractors.DiagnosticsExtractor do
 
   defp do_extract_project(project_root) do
     abs_path = Path.expand(project_root)
-    runner_file = Path.join(abs_path, ".watson_diagnostics_runner.exs")
-    output_file = Path.join(abs_path, ".watson_diagnostics_output.json")
+    unique_id = :erlang.unique_integer([:positive])
+    runner_file = Path.join(abs_path, ".watson_diagnostics_runner_#{unique_id}.exs")
+    output_file = Path.join(abs_path, ".watson_diagnostics_output_#{unique_id}.json")
 
     try do
       # Delete any previous output

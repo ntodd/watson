@@ -17,14 +17,17 @@ defmodule Mix.Tasks.Watson.Mcp do
 
   Once running, the MCP server provides these tools:
 
-    * `watson_index` - Index the project
-    * `watson_query_def` - Query function definition
-    * `watson_query_refs` - Query references
-    * `watson_query_callers` - Query callers graph
-    * `watson_query_callees` - Query callees graph
-    * `watson_query_routes` - Query Phoenix routes
-    * `watson_query_schema` - Query Ecto schema
-    * `watson_query_impact` - Query impact analysis
+    * `index` - Force rebuild of code index
+    * `function_definition` - Find where a function is defined
+    * `function_references` - Find all call sites for a function
+    * `function_callers` - Find functions that call a given function
+    * `function_callees` - Find functions called by a given function
+    * `routes` - List all Phoenix routes
+    * `schema` - Get Ecto schema structure
+    * `impact_analysis` - Analyze what's affected by changing files
+    * `function_spec` - Get @spec type signature for a function
+    * `module_types` - List all type definitions in a module
+    * `type_errors` - Get compiler type errors and warnings
 
   ## Example MCP Configuration
 
