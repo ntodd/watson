@@ -14,8 +14,7 @@ defmodule Exint.MCP.Server do
   @tools [
     %{
       name: "exint_index",
-      description:
-        "Index an Elixir/Phoenix project to enable code intelligence queries. Must be run before other queries.",
+      description: "Index an Elixir/Phoenix project to build a searchable code graph. Run this once before using other query tools. The index is stored in .exint/ and persists across sessions. Re-run after code changes to update.",
       inputSchema: %{
         type: "object",
         properties: %{
@@ -29,14 +28,13 @@ defmodule Exint.MCP.Server do
     },
     %{
       name: "exint_query_def",
-      description:
-        "Query for a function or macro definition by its MFA (Module.function/arity).",
+      description: "Find where a function is defined. Returns the file path, line numbers, arity, visibility (public/private), and whether it's a macro. Use this to jump to a function's implementation.",
       inputSchema: %{
         type: "object",
         properties: %{
           mfa: %{
             type: "string",
-            description: "The MFA to look up, e.g., 'MyApp.Users.get_user/1'"
+            description: "Function to find in Module.function/arity format, e.g., 'MyApp.Accounts.get_user/1'"
           }
         },
         required: ["mfa"]
@@ -44,13 +42,13 @@ defmodule Exint.MCP.Server do
     },
     %{
       name: "exint_query_refs",
-      description: "Query for all call sites that reference a function by its MFA.",
+      description: "Find all places where a function is called. Returns each call site with file, line number, and the calling function's MFA. Use this to understand how a function is used throughout the codebase.",
       inputSchema: %{
         type: "object",
         properties: %{
           mfa: %{
             type: "string",
-            description: "The MFA to find references for"
+            description: "Function to find references for in Module.function/arity format"
           }
         },
         required: ["mfa"]
@@ -58,17 +56,17 @@ defmodule Exint.MCP.Server do
     },
     %{
       name: "exint_query_callers",
-      description: "Query for functions that call a given function, with optional depth traversal.",
+      description: "Find functions that call a given function, traversing up the call graph. With depth=1, returns direct callers. With depth=2+, also returns callers of callers. Use this for impact analysis - what code paths lead to this function?",
       inputSchema: %{
         type: "object",
         properties: %{
           mfa: %{
             type: "string",
-            description: "The MFA to find callers for"
+            description: "Function to find callers for in Module.function/arity format"
           },
           depth: %{
             type: "integer",
-            description: "How many levels of callers to traverse. Default is 1."
+            description: "How many levels up the call graph to traverse. Default is 1 (direct callers only)."
           }
         },
         required: ["mfa"]
@@ -76,17 +74,17 @@ defmodule Exint.MCP.Server do
     },
     %{
       name: "exint_query_callees",
-      description: "Query for functions called by a given function, with optional depth traversal.",
+      description: "Find functions called by a given function, traversing down the call graph. With depth=1, returns direct callees. With depth=2+, follows the chain deeper. Use this to understand a function's dependencies.",
       inputSchema: %{
         type: "object",
         properties: %{
           mfa: %{
             type: "string",
-            description: "The MFA to find callees for"
+            description: "Function to find callees for in Module.function/arity format"
           },
           depth: %{
             type: "integer",
-            description: "How many levels of callees to traverse. Default is 1."
+            description: "How many levels down the call graph to traverse. Default is 1 (direct callees only)."
           }
         },
         required: ["mfa"]
@@ -94,8 +92,7 @@ defmodule Exint.MCP.Server do
     },
     %{
       name: "exint_query_routes",
-      description:
-        "Query for all Phoenix routes in the project. Returns verb, path, controller, and action.",
+      description: "List all HTTP endpoints defined in Phoenix routers. Returns verb (GET/POST/etc), URL path, controller module, and action function for each route. Use this to understand the API surface or find which controller handles a URL.",
       inputSchema: %{
         type: "object",
         properties: %{},
@@ -104,14 +101,13 @@ defmodule Exint.MCP.Server do
     },
     %{
       name: "exint_query_schema",
-      description:
-        "Query for an Ecto schema definition by module name. Returns fields and associations.",
+      description: "Get the structure of an Ecto schema. Returns the database table name, all fields with their types, and associations (belongs_to, has_many, has_one). Use this to understand data models without reading the schema file.",
       inputSchema: %{
         type: "object",
         properties: %{
           module: %{
             type: "string",
-            description: "The module name of the schema, e.g., 'MyApp.Accounts.User'"
+            description: "Full module name of the Ecto schema, e.g., 'MyApp.Accounts.User'"
           }
         },
         required: ["module"]
@@ -119,15 +115,14 @@ defmodule Exint.MCP.Server do
     },
     %{
       name: "exint_query_impact",
-      description:
-        "Query for the impact of changing files. Returns affected modules and test files.",
+      description: "Analyze what would be affected by changing files. Returns modules defined in those files, all modules that depend on them (transitively), and test files that should be run. Use this before making changes to understand blast radius.",
       inputSchema: %{
         type: "object",
         properties: %{
           files: %{
             type: "array",
             items: %{type: "string"},
-            description: "List of file paths that have changed"
+            description: "List of file paths that have changed or will change"
           }
         },
         required: ["files"]
