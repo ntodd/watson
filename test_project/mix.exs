@@ -53,7 +53,7 @@ defmodule TestProject.MixProject do
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
-      {:exint, path: ".."}
+      {:watson, path: ".."}
     ]
   end
 

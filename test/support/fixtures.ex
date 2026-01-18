@@ -1,6 +1,6 @@
-defmodule Exint.Test.Fixtures do
+defmodule Watson.Test.Fixtures do
   @moduledoc """
-  Test fixtures for exint tests.
+  Test fixtures for watson tests.
   """
 
   def simple_module do

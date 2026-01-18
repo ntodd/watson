@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "exint": {
+    "watson": {
       "command": "mix",
-      "args": ["exint.mcp"],
+      "args": ["watson.mcp"],
       "cwd": "${workspaceFolder}"
     }
   }

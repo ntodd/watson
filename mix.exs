@@ -1,13 +1,12 @@
-defmodule Exint.MixProject do
+defmodule Watson.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :exint,
+      app: :watson,
       version: "0.1.0",
       elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
-      escript: escript(),
       deps: deps(),
       elixirc_paths: elixirc_paths(Mix.env()),
       aliases: aliases()
@@ -17,16 +16,12 @@ defmodule Exint.MixProject do
   def application do
     [
       extra_applications: [:logger, :mix, :tools],
-      mod: {Exint.Application, []}
+      mod: {Watson.Application, []}
     ]
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
-
-  defp escript do
-    [main_module: Exint.CLI]
-  end
 
   defp deps do
     [
