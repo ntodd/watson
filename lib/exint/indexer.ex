@@ -123,29 +123,29 @@ defmodule Exint.Indexer do
   end
 
   defp collect_records(ast_result, compiler_result, xref_result, routes, schemas) do
-    # AST records (source: :ast, confidence: :high)
-    ast_records =
+    # Non-call AST records (source: :ast, confidence: :high)
+    ast_non_call_records =
       [
         Enum.map(ast_result.modules, &{&1, :ast, :high}),
         Enum.map(ast_result.functions, &{&1, :ast, :high}),
         Enum.map(ast_result.aliases, &{&1, :ast, :high}),
-        Enum.map(ast_result.structs, &{&1, :ast, :high}),
-        # AST calls have medium confidence until resolved
-        Enum.map(ast_result.calls, &{&1, :ast, :medium})
+        Enum.map(ast_result.structs, &{&1, :ast, :high})
       ]
       |> List.flatten()
 
-    # Compiler records (source: :compiler, confidence: :high)
-    compiler_records =
-      [
-        Enum.map(compiler_result.calls || [], &{&1, :compiler, :high}),
-        Enum.map(compiler_result.edges || [], &{&1, :compiler, :high})
-      ]
-      |> List.flatten()
+    # Collect calls from all sources, then deduplicate
+    # Priority: compiler > xref > ast (compiler has full MFA, xref has resolved callee)
+    ast_calls = Enum.map(ast_result.calls, &{&1, :ast, :medium})
+    compiler_calls = Enum.map(compiler_result.calls || [], &{&1, :compiler, :high})
+    xref_calls = Enum.map(xref_result.calls || [], &{&1, :xref, :high})
 
-    # Xref records (source: :xref, confidence: :high)
-    xref_records =
-      Enum.map(xref_result.edges || [], &{&1, :xref, :high})
+    # Deduplicate calls - prefer higher quality sources
+    # Key by (callee, file, line) to identify same call site
+    deduplicated_calls = deduplicate_calls(compiler_calls, xref_calls, ast_calls)
+
+    # Edges (don't need deduplication - different semantics)
+    compiler_edges = Enum.map(compiler_result.edges || [], &{&1, :compiler, :high})
+    xref_edges = Enum.map(xref_result.edges || [], &{&1, :xref, :high})
 
     # Phoenix routes (source: :ast, confidence: :high)
     route_records = Enum.map(routes, &{&1, :ast, :high})
@@ -153,8 +153,32 @@ defmodule Exint.Indexer do
     # Ecto schemas (source: :ast, confidence: :high)
     schema_records = Enum.map(schemas, &{&1, :ast, :high})
 
-    [ast_records, compiler_records, xref_records, route_records, schema_records]
+    [ast_non_call_records, deduplicated_calls, compiler_edges, xref_edges, route_records, schema_records]
     |> List.flatten()
+  end
+
+  # Deduplicate calls across sources, preferring compiler > xref > ast
+  defp deduplicate_calls(compiler_calls, xref_calls, ast_calls) do
+    # Build a map keyed by (callee, file, line)
+    # Insert in reverse priority order so higher priority overwrites
+    all_calls = ast_calls ++ xref_calls ++ compiler_calls
+
+    all_calls
+    |> Enum.reduce(%{}, fn {record, source, confidence}, acc ->
+      key = call_key(record)
+      # Always overwrite - later entries (higher priority) win
+      Map.put(acc, key, {record, source, confidence})
+    end)
+    |> Map.values()
+  end
+
+  defp call_key(record) do
+    # Use file + line as the unique key for a call site
+    # (same call site may have different callee representations: Accounts.foo vs TestProject.Accounts.foo)
+    # Normalize file path for comparison
+    file = record.file |> Path.basename()
+    line = record.span[:line] || record.span.line
+    {file, line}
   end
 
   defp count_records(records) do

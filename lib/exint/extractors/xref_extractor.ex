@@ -2,129 +2,129 @@ defmodule Exint.Extractors.XrefExtractor do
   @moduledoc """
   Phase 3: Xref integration.
 
-  Uses Mix.Tasks.Xref to extract module dependency edges.
+  Uses Mix.Tasks.Xref to extract:
+  - Fully resolved function calls (caller -> callee with exact MFAs)
+  - Module dependency edges (compile-time vs runtime)
   """
 
-  alias Exint.Records.XrefEdge
+  alias Exint.Records.{CallRef, XrefEdge}
 
   @doc """
-  Extracts xref dependency graph from the compiled project.
+  Extracts xref data from the compiled project.
 
   Must be called after the project is compiled.
+  Returns resolved function calls and module dependency edges.
   """
   def extract(project_root \\ ".") do
-    # Ensure we're in the project context
     prev_dir = File.cwd!()
 
     try do
       File.cd!(project_root)
 
-      # Get the xref graph data
-      edges = extract_callers_graph()
-      compile_deps = extract_compile_dependencies()
+      # Get resolved function calls
+      calls = extract_calls()
 
-      # Merge and deduplicate
-      all_edges = (edges ++ compile_deps) |> Enum.uniq_by(&{&1.from, &1.to, &1.type})
+      # Get module dependency graph
+      edges = extract_dependency_graph()
 
-      %{edges: all_edges}
+      %{calls: calls, edges: edges}
     after
       File.cd!(prev_dir)
     end
   end
 
-  defp extract_callers_graph do
-    # Use Mix.Tasks.Xref.calls/0 which returns [{caller, callee}]
-    # This is more reliable than calling the mix task directly
+  @doc """
+  Extracts fully resolved function calls using Mix.Tasks.Xref.calls/0.
+
+  This gives us accurate caller->callee relationships with resolved module names.
+  """
+  def extract_calls do
     try do
-      if Code.ensure_loaded?(Mix.Tasks.Xref) do
-        calls = get_xref_calls()
+      # Suppress deprecation warning - this API still works and is the simplest way
+      calls = Mix.Tasks.Xref.calls()
 
-        calls
-        |> Enum.map(fn {caller, callee} ->
-          {caller_mod, _, _} = caller
-          {callee_mod, _, _} = callee
-
-          XrefEdge.new(
-            inspect(caller_mod),
-            inspect(callee_mod),
-            :runtime
-          )
-        end)
-        |> Enum.uniq_by(&{&1.from, &1.to})
-      else
-        []
-      end
+      calls
+      |> Enum.map(&call_to_record/1)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq_by(&{&1.caller, &1.callee, &1.span.line})
     rescue
-      _ -> []
+      e ->
+        IO.puts("  Warning: xref calls extraction failed: #{inspect(e)}")
+        []
     end
   end
 
-  defp get_xref_calls do
-    # Try to get calls from xref
-    try do
-      Mix.Task.run("xref", ["callers", ".", "--format", "plain"])
-      []
-    rescue
-      _ -> []
-    catch
-      :exit, _ -> []
+  defp call_to_record(%{caller_module: caller_mod, callee: {callee_mod, name, arity}, file: file, line: line}) do
+    # Skip Elixir/Erlang stdlib calls to reduce noise
+    callee_mod_str = inspect(callee_mod)
+
+    if skip_module?(callee_mod_str) do
+      nil
+    else
+      caller = inspect(caller_mod)
+      callee = "#{callee_mod_str}.#{name}/#{arity}"
+
+      # Normalize file path to be relative
+      relative_file = make_relative(file)
+
+      CallRef.new(caller, callee, relative_file, line)
     end
   end
 
-  defp extract_compile_dependencies do
-    # Get compile-time dependencies from manifest
-    try do
-      manifest = Mix.Project.manifest_path()
-
-      if File.exists?(manifest) do
-        case :file.consult(manifest) do
-          {:ok, [{:v3, deps, _sources, _compile_dest}]} ->
-            extract_deps_from_manifest(deps)
-
-          {:ok, [{:v3, deps, _sources, _compile_dest, _opts}]} ->
-            extract_deps_from_manifest(deps)
-
-          _ ->
-            []
-        end
-      else
-        []
-      end
-    rescue
-      _ -> []
-    end
-  end
-
-  defp extract_deps_from_manifest(deps) when is_list(deps) do
-    deps
-    |> Enum.flat_map(fn
-      {module, compile_deps, _exports, _compile_opts} when is_list(compile_deps) ->
-        Enum.map(compile_deps, fn dep_module ->
-          XrefEdge.new(
-            inspect(module),
-            inspect(dep_module),
-            :compile
-          )
-        end)
-
-      _ ->
-        []
-    end)
-  end
-
-  defp extract_deps_from_manifest(_), do: []
+  defp call_to_record(_), do: nil
 
   @doc """
-  Gets direct callers of a module.
+  Extracts module dependency graph.
+
+  Returns edges with type :compile, :export, or :runtime.
   """
-  def callers_of(module) when is_atom(module) do
-    # Use xref to find callers
+  def extract_dependency_graph do
     try do
-      case System.cmd("mix", ["xref", "callers", inspect(module)],
-             stderr_to_stdout: true
-           ) do
-        {output, 0} ->
-          parse_callers_output(output)
+      # Get all sources from the manifest
+      sources = get_sources()
+
+      sources
+      |> Enum.flat_map(&extract_deps_from_source/1)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq_by(&{&1.from, &1.to, &1.type})
+    rescue
+      e ->
+        IO.puts("  Warning: xref graph extraction failed: #{inspect(e)}")
+        []
+    end
+  end
+
+  defp get_sources do
+    try do
+      # Use Mix.Project's source tracking
+      manifest_path = Path.join(Mix.Project.manifest_path(), ".mix/compile.elixir")
+
+      if File.exists?(manifest_path) do
+        {sources, _} = Mix.Compilers.Elixir.read_manifest(manifest_path)
+        sources
+      else
+        # Fallback: try to get from xref
+        []
+      end
+    rescue
+      _ -> []
+    end
+  end
+
+  defp extract_deps_from_source(source) do
+    try do
+      # source is a tuple like {source_path, modules, compile_deps, export_deps, runtime_deps, ...}
+      case source do
+        {_path, _size, _digest, _kind, _beam_mtime, modules, compile_deps, export_deps, runtime_deps, _compile_env} ->
+          from_modules = modules |> List.wrap()
+
+          Enum.flat_map(from_modules, fn from_mod ->
+            compile_edges = Enum.map(List.wrap(compile_deps), &create_edge(from_mod, &1, :compile))
+            export_edges = Enum.map(List.wrap(export_deps), &create_edge(from_mod, &1, :export))
+            runtime_edges = Enum.map(List.wrap(runtime_deps), &create_edge(from_mod, &1, :runtime))
+
+            compile_edges ++ export_edges ++ runtime_edges
+          end)
 
         _ ->
           []
@@ -134,26 +134,49 @@ defmodule Exint.Extractors.XrefExtractor do
     end
   end
 
-  def callers_of(module) when is_binary(module) do
-    callers_of(String.to_atom(module))
+  defp create_edge(from, to, type) when is_atom(from) and is_atom(to) do
+    from_str = inspect(from)
+    to_str = inspect(to)
+
+    if skip_module?(to_str) do
+      nil
+    else
+      XrefEdge.new(from_str, to_str, type)
+    end
   end
 
-  defp parse_callers_output(output) do
-    output
-    |> String.split("\n", trim: true)
-    |> Enum.filter(&String.contains?(&1, ".ex:"))
-    |> Enum.map(fn line ->
-      # Format: lib/my_app/foo.ex:10: MyApp.Foo.bar/2
-      case String.split(line, ": ", parts: 2) do
-        [location, mfa] ->
-          [file, line_str] = String.split(location, ":")
-          line_num = String.to_integer(line_str)
-          %{file: file, line: line_num, mfa: String.trim(mfa)}
+  defp create_edge(_, _, _), do: nil
 
-        _ ->
-          nil
-      end
-    end)
-    |> Enum.reject(&is_nil/1)
+  # Skip standard library and common framework modules to reduce noise
+  defp skip_module?("Elixir." <> _), do: false  # Keep Elixir modules
+  defp skip_module?(":erlang"), do: true
+  defp skip_module?(":elixir" <> _), do: true
+  defp skip_module?(":" <> _), do: true  # Skip erlang modules
+  defp skip_module?("Kernel" <> _), do: true
+  defp skip_module?("String"), do: true
+  defp skip_module?("Enum"), do: true
+  defp skip_module?("Map"), do: true
+  defp skip_module?("List"), do: true
+  defp skip_module?("IO"), do: true
+  defp skip_module?("File"), do: true
+  defp skip_module?("Path"), do: true
+  defp skip_module?("Agent"), do: true
+  defp skip_module?("GenServer"), do: true
+  defp skip_module?("Supervisor"), do: true
+  defp skip_module?("Application"), do: true
+  defp skip_module?("Module"), do: true
+  defp skip_module?("Code"), do: true
+  defp skip_module?("Macro"), do: true
+  defp skip_module?("Access"), do: true
+  defp skip_module?(_), do: false
+
+  defp make_relative(file) do
+    cwd = File.cwd!()
+
+    if String.starts_with?(file, cwd) do
+      Path.relative_to(file, cwd)
+    else
+      file
+    end
   end
 end

@@ -230,15 +230,46 @@ defmodule Exint.Extractors.CompilerTracer do
   end
 
   defp event_to_call_ref(event) do
-    caller_mfa = format_mfa(event.caller_module, event.caller_function)
-    callee_mfa = "#{inspect(event.callee_module)}.#{event.callee_name}/#{event.callee_arity}"
-
-    if caller_mfa do
-      CallRef.new(caller_mfa, callee_mfa, event.file, event.line)
-    else
+    # Skip calls at line 1 (usually macro expansions/compile-time code)
+    if event.line <= 1 do
       nil
+    else
+      caller_mfa = format_mfa(event.caller_module, event.caller_function)
+      callee_mfa = "#{inspect(event.callee_module)}.#{event.callee_name}/#{event.callee_arity}"
+
+      cond do
+        # No caller info
+        is_nil(caller_mfa) ->
+          nil
+
+        # Skip internal functions (double underscore)
+        String.contains?(caller_mfa, "__") ->
+          nil
+
+        # Skip calls to Kernel/Module/Elixir internals
+        skip_callee?(callee_mfa) ->
+          nil
+
+        true ->
+          CallRef.new(caller_mfa, callee_mfa, event.file, event.line)
+      end
     end
   end
+
+  # Skip standard library and compiler internal calls
+  defp skip_callee?("Kernel." <> _), do: true
+  defp skip_callee?("Module." <> _), do: true
+  defp skip_callee?("Code." <> _), do: true
+  defp skip_callee?("Macro." <> _), do: true
+  defp skip_callee?(":erlang." <> _), do: true
+  defp skip_callee?(":elixir" <> _), do: true
+  defp skip_callee?("String.Chars." <> _), do: true
+  defp skip_callee?("Access." <> _), do: true
+  defp skip_callee?("Phoenix.Component.Declarative." <> _), do: true
+  defp skip_callee?("Phoenix.Template." <> _), do: true
+  defp skip_callee?("Phoenix.LiveView.HTMLEngine." <> _), do: true
+  defp skip_callee?("Phoenix.VerifiedRoutes." <> _), do: true
+  defp skip_callee?(_), do: false
 
   defp event_to_xref_edge(%{type: :require} = event) do
     XrefEdge.new(
