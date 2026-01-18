@@ -38,6 +38,7 @@ defmodule Watson.Query do
         :spec -> query_spec(args[:mfa], project_root)
         :types -> query_types(args[:module], project_root)
         :type_errors -> query_type_errors(project_root)
+        :project_info -> query_project_info(project_root)
         _ -> {:error, "Unknown query type: #{query_type}"}
       end
     end
@@ -195,6 +196,32 @@ defmodule Watson.Query do
       end)
 
     {:ok, result}
+  end
+
+  @doc """
+  Query for project and index information.
+  Returns versions, mix environment, and index statistics.
+  """
+  def query_project_info(project_root \\ ".") do
+    case Store.read_manifest(project_root) do
+      {:ok, manifest} ->
+        {:ok,
+         %{
+           watson_version: Watson.version(),
+           schema_version: manifest["schema_version"],
+           elixir_version: manifest["elixir_version"],
+           otp_version: manifest["otp_version"],
+           mix_env: manifest["mix_env"],
+           git_sha: manifest["git_sha"],
+           indexed_at: manifest["indexed_at"],
+           project_root: manifest["project_root"],
+           file_count: manifest["file_count"],
+           record_count: manifest["record_count"]
+         }}
+
+      {:error, _} = error ->
+        error
+    end
   end
 
   @doc """

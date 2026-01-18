@@ -78,6 +78,7 @@ You can force a full rebuild with the `index` tool if needed, but it's rarely ne
 |------|-------------|
 | `impact_analysis` | Analyze what's affected by changing files. Returns affected modules and suggested test files. |
 | `index` | Force a full rebuild of the code index. Usually not needed due to auto-indexing. |
+| `project_info` | Get project and index information for debugging. Returns Watson version, Elixir/OTP versions, mix environment, and index statistics. |
 
 ## MFA Format
 

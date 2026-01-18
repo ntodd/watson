@@ -176,6 +176,16 @@ defmodule Watson.MCP.Server do
         properties: %{},
         required: []
       }
+    },
+    %{
+      name: "project_info",
+      description:
+        "Get project and index information for debugging. Returns Watson version, Elixir/OTP versions, mix environment, and index statistics.",
+      inputSchema: %{
+        type: "object",
+        properties: %{},
+        required: []
+      }
     }
   ]
 
@@ -419,6 +429,12 @@ defmodule Watson.MCP.Server do
   defp execute_tool("type_errors", _args, state) do
     with :ok <- ensure_index(state.project_path) do
       Watson.Query.execute(:type_errors, %{}, project_root: state.project_path)
+    end
+  end
+
+  defp execute_tool("project_info", _args, state) do
+    with :ok <- ensure_index(state.project_path) do
+      Watson.Query.execute(:project_info, %{}, project_root: state.project_path)
     end
   end
 
