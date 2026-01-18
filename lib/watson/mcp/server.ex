@@ -15,7 +15,7 @@ defmodule Watson.MCP.Server do
     %{
       name: "index",
       description:
-        "Build a searchable code graph for an Elixir/Phoenix project. Run this once before using other tools. The index persists in .watson/ - re-run after code changes to update.",
+        "Force a full rebuild of the code index. Usually not needed - other tools auto-index incrementally. Use this to: (1) force a complete rebuild if the index seems stale, or (2) index a different project path.",
       inputSchema: %{
         type: "object",
         properties: %{
