@@ -43,12 +43,25 @@ defmodule Exint.Records.AliasRef do
 
     map
     |> maybe_put(:as, record.as)
-    |> maybe_put(:only, record.only)
-    |> maybe_put(:except, record.except)
+    |> maybe_put(:only, serialize_func_list(record.only))
+    |> maybe_put(:except, serialize_func_list(record.except))
   end
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  # Convert function/arity tuples to strings: [{:func, 0}] -> ["func/0"]
+  defp serialize_func_list(nil), do: nil
+
+  defp serialize_func_list(list) when is_list(list) do
+    Enum.map(list, fn
+      {name, arity} when is_atom(name) and is_integer(arity) ->
+        "#{name}/#{arity}"
+
+      other ->
+        to_string(other)
+    end)
+  end
 
   @doc """
   Creates a new AliasRef record.

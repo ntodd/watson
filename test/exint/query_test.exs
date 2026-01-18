@@ -17,19 +17,19 @@ defmodule Exint.QueryTest do
 
   describe "query_def/2" do
     test "returns function definition by MFA" do
-      {:ok, result} = Query.execute(:def, %{mfa: "TestApp.Accounts.get_user/1"}, project_root: @test_project_path)
+      {:ok, result} = Query.execute(:def, %{mfa: "TestProject.Accounts.get_user/1"}, project_root: @test_project_path)
 
       assert length(result) == 1
       [def_record] = result
 
       assert def_record["kind"] == "function_def"
-      assert def_record["data"]["module"] == "TestApp.Accounts"
+      assert def_record["data"]["module"] == "TestProject.Accounts"
       assert def_record["data"]["name"] == "get_user"
       assert def_record["data"]["arity"] == 1
     end
 
     test "returns empty list for non-existent function" do
-      {:ok, result} = Query.execute(:def, %{mfa: "TestApp.NonExistent.foo/1"}, project_root: @test_project_path)
+      {:ok, result} = Query.execute(:def, %{mfa: "TestProject.NonExistent.foo/1"}, project_root: @test_project_path)
 
       assert result == []
     end
@@ -64,13 +64,13 @@ defmodule Exint.QueryTest do
 
   describe "query_schema/2" do
     test "returns Ecto schema by module" do
-      {:ok, result} = Query.execute(:schema, %{module: "TestApp.Accounts.User"}, project_root: @test_project_path)
+      {:ok, result} = Query.execute(:schema, %{module: "TestProject.Accounts.User"}, project_root: @test_project_path)
 
       assert length(result) == 1
       [schema] = result
 
       assert schema["kind"] == "ecto_schema"
-      assert schema["data"]["module"] == "TestApp.Accounts.User"
+      assert schema["data"]["module"] == "TestProject.Accounts.User"
       assert schema["data"]["source"] == "users"
 
       # Check fields

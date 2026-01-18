@@ -27,7 +27,11 @@ defmodule Exint.Extractors.PhoenixExtractor do
   defp is_router_file?(file) do
     case File.read(file) do
       {:ok, content} ->
-        String.contains?(content, "use Phoenix.Router")
+        # Check for direct Phoenix.Router use or web module :router pattern
+        String.contains?(content, "use Phoenix.Router") or
+          (String.contains?(content, "Router") and
+             (String.contains?(content, ":router") or
+                String.contains?(content, "pipe_through")))
 
       _ ->
         false
