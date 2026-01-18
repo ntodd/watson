@@ -114,7 +114,7 @@ defmodule Exint.MCP.Server do
       }
     },
     %{
-      name: "impact",
+      name: "impact_analysis",
       description: "Analyze what's affected by changing files. Returns affected modules and suggested test files to run.",
       inputSchema: %{
         type: "object",
@@ -333,7 +333,7 @@ defmodule Exint.MCP.Server do
     Exint.Query.execute(:schema, %{module: module}, project_root: state.project_path)
   end
 
-  defp execute_tool("impact", %{"files" => files}, state) do
+  defp execute_tool("impact_analysis", %{"files" => files}, state) do
     Exint.Query.execute(:impact, %{files: files}, project_root: state.project_path)
   end
 
