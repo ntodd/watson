@@ -269,17 +269,51 @@ defmodule Exint.Query do
   end
 
   defp build_module_dep_graph(project_root) do
-    Store.stream_records(project_root)
-    |> Stream.filter(&(&1["kind"] == "xref_edge"))
-    |> Enum.reduce(%{}, fn record, graph ->
-      from = record["data"]["from"]
-      to = record["data"]["to"]
+    # Build from xref edges (compile-time dependencies)
+    xref_deps =
+      Store.stream_records(project_root)
+      |> Stream.filter(&(&1["kind"] == "xref_edge"))
+      |> Enum.reduce(%{}, fn record, graph ->
+        from = record["data"]["from"]
+        to = record["data"]["to"]
+        # Build reverse graph: if A depends on B, then when B changes, A is affected
+        Map.update(graph, to, [from], &[from | &1])
+      end)
 
-      # Build reverse graph: if A depends on B, then when B changes, A is affected
-      Map.update(graph, to, [from], &[from | &1])
-    end)
+    # Build from call refs (runtime dependencies) - extract module from MFA
+    call_deps =
+      Store.stream_records(project_root)
+      |> Stream.filter(&(&1["kind"] == "call_ref"))
+      |> Stream.filter(&(&1["data"]["callee"] != nil))
+      |> Enum.reduce(%{}, fn record, graph ->
+        caller_mfa = record["data"]["caller"]
+        callee_mfa = record["data"]["callee"]
+
+        caller_mod = extract_module_from_mfa(caller_mfa)
+        callee_mod = extract_module_from_mfa(callee_mfa)
+
+        if caller_mod && callee_mod && caller_mod != callee_mod do
+          # When callee_mod changes, caller_mod is affected
+          Map.update(graph, callee_mod, [caller_mod], &[caller_mod | &1])
+        else
+          graph
+        end
+      end)
+
+    # Merge both dependency graphs
+    Map.merge(xref_deps, call_deps, fn _k, v1, v2 -> Enum.uniq(v1 ++ v2) end)
     |> Map.new(fn {k, v} -> {k, Enum.uniq(v)} end)
   end
+
+  defp extract_module_from_mfa(mfa) when is_binary(mfa) do
+    # "MyApp.Module.function/1" -> "MyApp.Module"
+    case Regex.run(~r/^(.+)\.[^.]+\/\d+$/, mfa) do
+      [_, module] -> module
+      _ -> nil
+    end
+  end
+
+  defp extract_module_from_mfa(_), do: nil
 
   defp find_affected_modules(changed_modules, dep_graph) do
     # Transitive closure using BFS
