@@ -1,15 +1,20 @@
 defmodule Watson.MixProject do
   use Mix.Project
 
+  @version "0.1.0"
+  @description "Code intelligence for Elixir/Phoenix projects. Builds a searchable call graph for LLM coding agents."
+
   def project do
     [
       app: :watson,
-      version: "0.1.0",
+      version: @version,
       elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       elixirc_paths: elixirc_paths(Mix.env()),
-      aliases: aliases()
+      aliases: aliases(),
+      description: @description,
+      package: package()
     ]
   end
 
@@ -17,6 +22,14 @@ defmodule Watson.MixProject do
     [
       extra_applications: [:logger, :mix, :tools],
       mod: {Watson.Application, []}
+    ]
+  end
+
+  defp package do
+    [
+      licenses: ["MIT"],
+      links: %{},
+      files: ~w(lib mix.exs README.md LICENSE .formatter.exs)
     ]
   end
 
