@@ -25,3 +25,9 @@ watson-*.tar
 # Index directories
 .watson/
 
+# Watson temp files (created during indexing)
+.watson_tracer_*.ex
+.watson_tracer_*.json
+.watson_runner_*.exs
+.watson_diagnostics_*.exs
+.watson_diagnostics_*.json
