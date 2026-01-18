@@ -28,8 +28,7 @@ defmodule Watson.MCP.ServerTest do
 
       {response, _state} = Server.handle_request(request, make_state())
 
-      assert response.result.tools != nil
-      tools = response.result.tools
+      assert [_ | _] = tools = response.result.tools
       tool_names = Enum.map(tools, & &1.name)
 
       assert "index" in tool_names
@@ -56,12 +55,8 @@ defmodule Watson.MCP.ServerTest do
 
       {response, _state} = Server.handle_request(request, make_state())
 
-      assert response.result.content != nil
-      [content] = response.result.content
-      result = Jason.decode!(content.text)
-
-      assert length(result) == 1
-      [def_record] = result
+      assert [content] = response.result.content
+      assert [def_record] = Jason.decode!(content.text)
       assert def_record["data"]["module"] == "TestProject.Accounts"
       assert def_record["data"]["name"] == "get_user"
     end
@@ -83,11 +78,9 @@ defmodule Watson.MCP.ServerTest do
 
       {response, _state} = Server.handle_request(request, make_state())
 
-      assert response.result.content != nil
-      [content] = response.result.content
+      assert [content] = response.result.content
       result = Jason.decode!(content.text)
 
-      assert is_list(result)
       # Should find UserController.create as a caller
       caller_mfas = Enum.map(result, & &1["mfa"])
       assert Enum.any?(caller_mfas, &String.contains?(&1, "UserController.create"))
@@ -110,11 +103,9 @@ defmodule Watson.MCP.ServerTest do
 
       {response, _state} = Server.handle_request(request, make_state())
 
-      assert response.result.content != nil
-      [content] = response.result.content
+      assert [content] = response.result.content
       result = Jason.decode!(content.text)
 
-      assert is_list(result)
       callee_mfas = Enum.map(result, & &1["mfa"])
       assert Enum.any?(callee_mfas, &String.contains?(&1, "Repo.insert"))
     end
@@ -133,12 +124,8 @@ defmodule Watson.MCP.ServerTest do
 
       {response, _state} = Server.handle_request(request, make_state())
 
-      assert response.result.content != nil
-      [content] = response.result.content
-      result = Jason.decode!(content.text)
-
-      assert length(result) > 0
-      [route | _] = result
+      assert [content] = response.result.content
+      assert [route | _] = Jason.decode!(content.text)
       assert route["data"]["verb"] != nil
       assert route["data"]["path"] != nil
     end
@@ -157,12 +144,8 @@ defmodule Watson.MCP.ServerTest do
 
       {response, _state} = Server.handle_request(request, make_state())
 
-      assert response.result.content != nil
-      [content] = response.result.content
-      result = Jason.decode!(content.text)
-
-      assert length(result) == 1
-      [schema] = result
+      assert [content] = response.result.content
+      assert [schema] = Jason.decode!(content.text)
       assert schema["data"]["source"] == "users"
     end
   end
@@ -180,8 +163,7 @@ defmodule Watson.MCP.ServerTest do
 
       {response, _state} = Server.handle_request(request, make_state())
 
-      assert response.result.content != nil
-      [content] = response.result.content
+      assert [content] = response.result.content
       result = Jason.decode!(content.text)
 
       assert Map.has_key?(result, "changed_modules")
@@ -218,7 +200,7 @@ defmodule Watson.MCP.ServerTest do
       {response, state} = Server.handle_request(request, %{project_path: ".", initialized: false})
 
       assert response.result.serverInfo.name == "watson"
-      assert response.result.protocolVersion != nil
+      assert is_binary(response.result.protocolVersion)
       assert state.initialized == true
     end
   end
