@@ -13,86 +13,86 @@ defmodule Exint.MCP.Server do
 
   @tools [
     %{
-      name: "exint_index",
-      description: "Index an Elixir/Phoenix project to build a searchable code graph. Run this once before using other query tools. The index is stored in .exint/ and persists across sessions. Re-run after code changes to update.",
+      name: "index",
+      description: "Build a searchable code graph for an Elixir/Phoenix project. Run this once before using other tools. The index persists in .exint/ - re-run after code changes to update.",
       inputSchema: %{
         type: "object",
         properties: %{
           path: %{
             type: "string",
-            description: "Path to the Mix project root. Defaults to current directory."
+            description: "Path to the Mix project root (defaults to current directory)"
           }
         },
         required: []
       }
     },
     %{
-      name: "exint_query_def",
-      description: "Find where a function is defined. Returns the file path, line numbers, arity, visibility (public/private), and whether it's a macro. Use this to jump to a function's implementation.",
+      name: "definition",
+      description: "Find where a function is defined. Returns file path, line numbers, visibility (public/private), and whether it's a macro.",
       inputSchema: %{
         type: "object",
         properties: %{
           mfa: %{
             type: "string",
-            description: "Function to find in Module.function/arity format, e.g., 'MyApp.Accounts.get_user/1'"
+            description: "Function in Module.function/arity format, e.g., 'MyApp.Accounts.get_user/1'"
           }
         },
         required: ["mfa"]
       }
     },
     %{
-      name: "exint_query_refs",
-      description: "Find all places where a function is called. Returns each call site with file, line number, and the calling function's MFA. Use this to understand how a function is used throughout the codebase.",
+      name: "references",
+      description: "Find all call sites for a function. Returns file, line, and calling function for each location where the function is invoked.",
       inputSchema: %{
         type: "object",
         properties: %{
           mfa: %{
             type: "string",
-            description: "Function to find references for in Module.function/arity format"
+            description: "Function in Module.function/arity format"
           }
         },
         required: ["mfa"]
       }
     },
     %{
-      name: "exint_query_callers",
-      description: "Find functions that call a given function, traversing up the call graph. With depth=1, returns direct callers. With depth=2+, also returns callers of callers. Use this for impact analysis - what code paths lead to this function?",
+      name: "callers",
+      description: "Find functions that call a given function (traverse up the call graph). Use depth=1 for direct callers, depth=2+ for transitive callers. Good for impact analysis.",
       inputSchema: %{
         type: "object",
         properties: %{
           mfa: %{
             type: "string",
-            description: "Function to find callers for in Module.function/arity format"
+            description: "Function in Module.function/arity format"
           },
           depth: %{
             type: "integer",
-            description: "How many levels up the call graph to traverse. Default is 1 (direct callers only)."
+            description: "Levels up the call graph (default: 1)"
           }
         },
         required: ["mfa"]
       }
     },
     %{
-      name: "exint_query_callees",
-      description: "Find functions called by a given function, traversing down the call graph. With depth=1, returns direct callees. With depth=2+, follows the chain deeper. Use this to understand a function's dependencies.",
+      name: "callees",
+      description: "Find functions called by a given function (traverse down the call graph). Use depth=1 for direct calls, depth=2+ for transitive dependencies.",
       inputSchema: %{
         type: "object",
         properties: %{
           mfa: %{
             type: "string",
-            description: "Function to find callees for in Module.function/arity format"
+            description: "Function in Module.function/arity format"
           },
           depth: %{
             type: "integer",
-            description: "How many levels down the call graph to traverse. Default is 1 (direct callees only)."
+            description: "Levels down the call graph (default: 1)"
           }
         },
         required: ["mfa"]
       }
     },
     %{
-      name: "exint_query_routes",
-      description: "List all HTTP endpoints defined in Phoenix routers. Returns verb (GET/POST/etc), URL path, controller module, and action function for each route. Use this to understand the API surface or find which controller handles a URL.",
+      name: "routes",
+      description: "List all Phoenix routes. Returns HTTP verb, path, controller, and action for each endpoint.",
       inputSchema: %{
         type: "object",
         properties: %{},
@@ -100,29 +100,29 @@ defmodule Exint.MCP.Server do
       }
     },
     %{
-      name: "exint_query_schema",
-      description: "Get the structure of an Ecto schema. Returns the database table name, all fields with their types, and associations (belongs_to, has_many, has_one). Use this to understand data models without reading the schema file.",
+      name: "schema",
+      description: "Get Ecto schema structure: database table, fields with types, and associations (belongs_to, has_many, has_one).",
       inputSchema: %{
         type: "object",
         properties: %{
           module: %{
             type: "string",
-            description: "Full module name of the Ecto schema, e.g., 'MyApp.Accounts.User'"
+            description: "Ecto schema module, e.g., 'MyApp.Accounts.User'"
           }
         },
         required: ["module"]
       }
     },
     %{
-      name: "exint_query_impact",
-      description: "Analyze what would be affected by changing files. Returns modules defined in those files, all modules that depend on them (transitively), and test files that should be run. Use this before making changes to understand blast radius.",
+      name: "impact",
+      description: "Analyze what's affected by changing files. Returns affected modules and suggested test files to run.",
       inputSchema: %{
         type: "object",
         properties: %{
           files: %{
             type: "array",
             items: %{type: "string"},
-            description: "List of file paths that have changed or will change"
+            description: "File paths that have or will change"
           }
         },
         required: ["files"]
@@ -293,7 +293,7 @@ defmodule Exint.MCP.Server do
 
   # Tool execution
 
-  defp execute_tool("exint_index", args, state) do
+  defp execute_tool("index", args, state) do
     path = Map.get(args, "path", state.project_path)
 
     case Exint.Indexer.index(path) do
@@ -305,35 +305,35 @@ defmodule Exint.MCP.Server do
     end
   end
 
-  defp execute_tool("exint_query_def", %{"mfa" => mfa}, state) do
+  defp execute_tool("definition", %{"mfa" => mfa}, state) do
     Exint.Query.execute(:def, %{mfa: mfa}, project_root: state.project_path)
   end
 
-  defp execute_tool("exint_query_refs", %{"mfa" => mfa}, state) do
+  defp execute_tool("references", %{"mfa" => mfa}, state) do
     Exint.Query.execute(:refs, %{mfa: mfa}, project_root: state.project_path)
   end
 
-  defp execute_tool("exint_query_callers", args, state) do
+  defp execute_tool("callers", args, state) do
     mfa = Map.get(args, "mfa")
     depth = Map.get(args, "depth", 1)
     Exint.Query.execute(:callers, %{mfa: mfa, depth: depth}, project_root: state.project_path)
   end
 
-  defp execute_tool("exint_query_callees", args, state) do
+  defp execute_tool("callees", args, state) do
     mfa = Map.get(args, "mfa")
     depth = Map.get(args, "depth", 1)
     Exint.Query.execute(:callees, %{mfa: mfa, depth: depth}, project_root: state.project_path)
   end
 
-  defp execute_tool("exint_query_routes", _args, state) do
+  defp execute_tool("routes", _args, state) do
     Exint.Query.execute(:routes, %{}, project_root: state.project_path)
   end
 
-  defp execute_tool("exint_query_schema", %{"module" => module}, state) do
+  defp execute_tool("schema", %{"module" => module}, state) do
     Exint.Query.execute(:schema, %{module: module}, project_root: state.project_path)
   end
 
-  defp execute_tool("exint_query_impact", %{"files" => files}, state) do
+  defp execute_tool("impact", %{"files" => files}, state) do
     Exint.Query.execute(:impact, %{files: files}, project_root: state.project_path)
   end
 
