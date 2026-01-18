@@ -57,8 +57,17 @@ defmodule Watson.Index.Store do
   Initializes the index directory structure.
   """
   def init(project_root \\ ".") do
-    File.mkdir_p!(index_dir(project_root))
+    dir = index_dir(project_root)
+    File.mkdir_p!(dir)
     File.mkdir_p!(cache_dir(project_root))
+
+    # Create .gitignore to prevent committing index files
+    gitignore_path = Path.join(dir, ".gitignore")
+
+    unless File.exists?(gitignore_path) do
+      File.write!(gitignore_path, "*\n")
+    end
+
     :ok
   end
 

@@ -46,12 +46,6 @@ Watson automatically indexes your project when you use any query tool. The index
 
 You can force a full rebuild with the `index` tool if needed, but it's rarely necessary.
 
-Add `.watson/` to your project's `.gitignore`:
-
-```bash
-echo ".watson/" >> .gitignore
-```
-
 ## Tools
 
 ### Code Navigation
