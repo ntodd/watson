@@ -31,3 +31,4 @@ watson-*.tar
 .watson_runner_*.exs
 .watson_diagnostics_*.exs
 .watson_diagnostics_*.json
+xref_graph.json*
