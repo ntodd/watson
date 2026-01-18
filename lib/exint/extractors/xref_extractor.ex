@@ -2,18 +2,19 @@ defmodule Exint.Extractors.XrefExtractor do
   @moduledoc """
   Phase 3: Xref integration.
 
-  Uses Mix.Tasks.Xref to extract:
-  - Fully resolved function calls (caller -> callee with exact MFAs)
-  - Module dependency edges (compile-time vs runtime)
+  Extracts module dependency edges (compile-time vs runtime) from the
+  compilation manifest. Function call extraction is handled by the
+  CompilerTracer which provides better data (full MFA for both caller
+  and callee).
   """
 
-  alias Exint.Records.{CallRef, XrefEdge}
+  alias Exint.Records.XrefEdge
 
   @doc """
   Extracts xref data from the compiled project.
 
   Must be called after the project is compiled.
-  Returns resolved function calls and module dependency edges.
+  Returns module dependency edges (calls are handled by CompilerTracer).
   """
   def extract(project_root \\ ".") do
     prev_dir = File.cwd!()
@@ -21,57 +22,17 @@ defmodule Exint.Extractors.XrefExtractor do
     try do
       File.cd!(project_root)
 
-      # Get resolved function calls
-      calls = extract_calls()
-
       # Get module dependency graph
       edges = extract_dependency_graph()
 
-      %{calls: calls, edges: edges}
+      # Note: Function calls are extracted by CompilerTracer which provides
+      # full MFA for both caller and callee. The deprecated Mix.Tasks.Xref.calls/0
+      # only provided module-level caller information.
+      %{calls: [], edges: edges}
     after
       File.cd!(prev_dir)
     end
   end
-
-  @doc """
-  Extracts fully resolved function calls using Mix.Tasks.Xref.calls/0.
-
-  This gives us accurate caller->callee relationships with resolved module names.
-  """
-  def extract_calls do
-    try do
-      # Suppress deprecation warning - this API still works and is the simplest way
-      calls = Mix.Tasks.Xref.calls()
-
-      calls
-      |> Enum.map(&call_to_record/1)
-      |> Enum.reject(&is_nil/1)
-      |> Enum.uniq_by(&{&1.caller, &1.callee, &1.span.line})
-    rescue
-      e ->
-        IO.puts("  Warning: xref calls extraction failed: #{inspect(e)}")
-        []
-    end
-  end
-
-  defp call_to_record(%{caller_module: caller_mod, callee: {callee_mod, name, arity}, file: file, line: line}) do
-    # Skip Elixir/Erlang stdlib calls to reduce noise
-    callee_mod_str = inspect(callee_mod)
-
-    if skip_module?(callee_mod_str) do
-      nil
-    else
-      caller = inspect(caller_mod)
-      callee = "#{callee_mod_str}.#{name}/#{arity}"
-
-      # Normalize file path to be relative
-      relative_file = make_relative(file)
-
-      CallRef.new(caller, callee, relative_file, line)
-    end
-  end
-
-  defp call_to_record(_), do: nil
 
   @doc """
   Extracts module dependency graph.
@@ -169,14 +130,4 @@ defmodule Exint.Extractors.XrefExtractor do
   defp skip_module?("Macro"), do: true
   defp skip_module?("Access"), do: true
   defp skip_module?(_), do: false
-
-  defp make_relative(file) do
-    cwd = File.cwd!()
-
-    if String.starts_with?(file, cwd) do
-      Path.relative_to(file, cwd)
-    else
-      file
-    end
-  end
 end
