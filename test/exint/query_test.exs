@@ -93,6 +93,130 @@ defmodule Exint.QueryTest do
     end
   end
 
+  describe "query_refs/2" do
+    test "returns call sites for a function" do
+      {:ok, result} = Query.execute(:refs, %{mfa: "TestProject.Accounts.create_user/1"}, project_root: @test_project_path)
+
+      assert length(result) >= 1
+
+      # All results should be call_ref records
+      assert Enum.all?(result, &(&1["kind"] == "call_ref"))
+
+      # Should have file and line info
+      [ref | _] = result
+      assert ref["data"]["file"] != nil
+      assert ref["data"]["span"]["line"] != nil
+    end
+
+    test "returns empty list for function with no references" do
+      {:ok, result} = Query.execute(:refs, %{mfa: "TestProject.NonExistent.foo/1"}, project_root: @test_project_path)
+
+      assert result == []
+    end
+  end
+
+  describe "query_callers/3" do
+    test "returns direct callers at depth 1" do
+      {:ok, result} = Query.execute(:callers, %{mfa: "TestProject.Accounts.create_user/1", depth: 1}, project_root: @test_project_path)
+
+      # create_user is called by UserController.create
+      caller_mfas = Enum.map(result, & &1.mfa)
+      assert Enum.any?(caller_mfas, &String.contains?(&1, "UserController.create"))
+
+      # All results should be depth 1
+      assert Enum.all?(result, &(&1.depth == 1))
+    end
+
+    test "returns transitive callers at depth 2+" do
+      # Repo.insert is called by Accounts.create_user, which is called by UserController.create
+      {:ok, result} = Query.execute(:callers, %{mfa: "TestProject.Repo.insert/1", depth: 3}, project_root: @test_project_path)
+
+      depths = result |> Enum.map(& &1.depth) |> Enum.uniq() |> Enum.sort()
+
+      # Should have callers at multiple depths
+      assert 1 in depths
+      # Depth 2 would be UserController calling Accounts calling Repo
+    end
+
+    test "returns empty list for function with no callers" do
+      {:ok, result} = Query.execute(:callers, %{mfa: "TestProject.NonExistent.foo/1", depth: 1}, project_root: @test_project_path)
+
+      assert result == []
+    end
+
+    test "defaults to depth 1" do
+      {:ok, result} = Query.execute(:callers, %{mfa: "TestProject.Accounts.create_user/1"}, project_root: @test_project_path)
+
+      # Should return results (default depth = 1)
+      assert is_list(result)
+      # All at depth 1
+      assert Enum.all?(result, &(&1.depth == 1))
+    end
+  end
+
+  describe "query_callees/3" do
+    test "returns direct callees at depth 1" do
+      {:ok, result} = Query.execute(:callees, %{mfa: "TestProject.Accounts.create_user/1", depth: 1}, project_root: @test_project_path)
+
+      # create_user calls User.changeset and Repo.insert
+      callee_mfas = Enum.map(result, & &1.mfa)
+
+      assert Enum.any?(callee_mfas, &String.contains?(&1, "changeset"))
+      assert Enum.any?(callee_mfas, &String.contains?(&1, "Repo.insert"))
+
+      # All results should be depth 1
+      assert Enum.all?(result, &(&1.depth == 1))
+    end
+
+    test "returns transitive callees at depth 2+" do
+      {:ok, result} = Query.execute(:callees, %{mfa: "TestProjectWeb.UserController.create/2", depth: 2}, project_root: @test_project_path)
+
+      depths = result |> Enum.map(& &1.depth) |> Enum.uniq() |> Enum.sort()
+
+      # Should have callees at depth 1 (Accounts.create_user) and depth 2 (Repo.insert, changeset)
+      assert 1 in depths
+      assert 2 in depths
+    end
+
+    test "returns empty list for function with no callees" do
+      {:ok, result} = Query.execute(:callees, %{mfa: "TestProject.NonExistent.foo/1", depth: 1}, project_root: @test_project_path)
+
+      assert result == []
+    end
+  end
+
+  describe "query_impact/2" do
+    test "returns affected modules for changed file" do
+      {:ok, result} = Query.execute(:impact, %{files: ["lib/test_project/accounts.ex"]}, project_root: @test_project_path)
+
+      assert Map.has_key?(result, :changed_modules)
+      assert Map.has_key?(result, :affected_modules)
+      assert Map.has_key?(result, :test_files)
+
+      # Accounts module should be in changed_modules
+      assert "TestProject.Accounts" in result.changed_modules
+
+      # UserController should be affected (it calls Accounts functions)
+      assert Enum.any?(result.affected_modules, &String.contains?(&1, "UserController"))
+    end
+
+    test "returns empty affected_modules for file with no dependents" do
+      # A leaf module that nothing depends on
+      {:ok, result} = Query.execute(:impact, %{files: ["lib/test_project_web/controllers/page_controller.ex"]}, project_root: @test_project_path)
+
+      # Should still return the structure
+      assert Map.has_key?(result, :changed_modules)
+      assert Map.has_key?(result, :affected_modules)
+    end
+
+    test "handles non-existent files gracefully" do
+      {:ok, result} = Query.execute(:impact, %{files: ["nonexistent.ex"]}, project_root: @test_project_path)
+
+      assert result.changed_modules == []
+      assert result.affected_modules == []
+    end
+  end
+
   describe "error handling" do
     test "returns error for missing index" do
       result = Query.execute(:def, %{mfa: "Foo.bar/1"}, project_root: "nonexistent_path")

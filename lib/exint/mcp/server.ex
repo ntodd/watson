@@ -162,7 +162,8 @@ defmodule Exint.MCP.Server do
     end
   end
 
-  defp handle_line(line, state) do
+  @doc false
+  def handle_line(line, state) do
     case Jason.decode(line) do
       {:ok, request} ->
         {response, new_state} = handle_request(request, state)
@@ -185,7 +186,8 @@ defmodule Exint.MCP.Server do
     end
   end
 
-  defp handle_request(%{"method" => "initialize", "id" => id} = _request, state) do
+  @doc false
+  def handle_request(%{"method" => "initialize", "id" => id} = _request, state) do
     response = %{
       jsonrpc: "2.0",
       id: id,
@@ -206,11 +208,11 @@ defmodule Exint.MCP.Server do
     {response, %{state | initialized: true}}
   end
 
-  defp handle_request(%{"method" => "initialized"}, state) do
+  def handle_request(%{"method" => "initialized"}, state) do
     {nil, state}
   end
 
-  defp handle_request(%{"method" => "tools/list", "id" => id}, state) do
+  def handle_request(%{"method" => "tools/list", "id" => id}, state) do
     response = %{
       jsonrpc: "2.0",
       id: id,
@@ -222,7 +224,7 @@ defmodule Exint.MCP.Server do
     {response, state}
   end
 
-  defp handle_request(
+  def handle_request(
          %{"method" => "tools/call", "id" => id, "params" => %{"name" => name} = params},
          state
        ) do
@@ -264,7 +266,7 @@ defmodule Exint.MCP.Server do
     {response, state}
   end
 
-  defp handle_request(%{"method" => "ping", "id" => id}, state) do
+  def handle_request(%{"method" => "ping", "id" => id}, state) do
     response = %{
       jsonrpc: "2.0",
       id: id,
@@ -274,7 +276,7 @@ defmodule Exint.MCP.Server do
     {response, state}
   end
 
-  defp handle_request(%{"method" => method, "id" => id}, state) do
+  def handle_request(%{"method" => method, "id" => id}, state) do
     response = %{
       jsonrpc: "2.0",
       id: id,
@@ -287,7 +289,7 @@ defmodule Exint.MCP.Server do
     {response, state}
   end
 
-  defp handle_request(_request, state) do
+  def handle_request(_request, state) do
     {nil, state}
   end
 
