@@ -170,8 +170,15 @@ defmodule Watson.Extractors.AstExtractor do
       alias_ref =
         AliasRef.new(:alias, context.current_module, target, context.file, line, as: as_alias)
 
+      # Populate aliases_map for resolving remote calls
+      # alias TestProject.Accounts -> "Accounts" => "TestProject.Accounts"
+      # alias TestProject.Accounts, as: Accts -> "Accts" => "TestProject.Accounts"
+      short_name = as_alias || List.last(parts) |> to_string()
+      new_aliases_map = Map.put(context.aliases_map, short_name, target)
+      new_context = %{context | aliases_map: new_aliases_map}
+
       new_result = %{result | aliases: [alias_ref | result.aliases]}
-      {node, {context, new_result}}
+      {node, {new_context, new_result}}
     else
       {node, {context, result}}
     end
@@ -257,7 +264,9 @@ defmodule Watson.Extractors.AstExtractor do
        )
        when is_atom(func_name) and is_list(args) do
     if context.current_function do
-      callee_module = module_to_string(module_parts)
+      raw_module = module_to_string(module_parts)
+      # Resolve alias to fully-qualified module name
+      callee_module = resolve_alias(raw_module, context.aliases_map)
       arity = length(args)
       line = Keyword.get(meta, :line, 1)
 
@@ -276,7 +285,7 @@ defmodule Watson.Extractors.AstExtractor do
     end
   end
 
-  # Visit local call (fun(args)) - unresolved
+  # Visit local call (fun(args)) - resolve to current module
   defp visit_node({func_name, meta, args} = node, {context, result})
        when is_atom(func_name) and is_list(args) and
               func_name not in [
@@ -336,14 +345,17 @@ defmodule Watson.Extractors.AstExtractor do
                 :&,
                 :"::"
               ] do
-    if context.current_function do
+    if context.current_function && context.current_module do
       line = Keyword.get(meta, :line, 1)
+      arity = length(args)
 
-      # Record as unresolved local call (callee: nil per spec)
+      # Resolve local call to current module for call graph traversal
+      callee = "#{context.current_module}.#{func_name}/#{arity}"
+
       call_ref =
         CallRef.new(
           context.current_function,
-          nil,
+          callee,
           context.file,
           line
         )
@@ -364,6 +376,31 @@ defmodule Watson.Extractors.AstExtractor do
     parts
     |> Enum.map(&to_string/1)
     |> Enum.join(".")
+  end
+
+  # Resolve an alias to its fully-qualified module name
+  # For "Accounts" with aliases_map %{"Accounts" => "TestProject.Accounts"}
+  # returns "TestProject.Accounts"
+  defp resolve_alias(module_name, aliases_map) do
+    # First, check if the first part is an alias
+    parts = String.split(module_name, ".")
+    first_part = List.first(parts)
+
+    case Map.get(aliases_map, first_part) do
+      nil ->
+        # No alias found, return as-is
+        module_name
+
+      resolved ->
+        if length(parts) == 1 do
+          # Simple alias like "Accounts" -> "TestProject.Accounts"
+          resolved
+        else
+          # Nested alias like "Accounts.User" -> "TestProject.Accounts.User"
+          rest = Enum.drop(parts, 1) |> Enum.join(".")
+          "#{resolved}.#{rest}"
+        end
+    end
   end
 
   defp get_arity(nil), do: 0

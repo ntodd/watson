@@ -17,7 +17,10 @@ defmodule Watson.QueryTest do
 
   describe "query_def/2" do
     test "returns function definition by MFA" do
-      {:ok, result} = Query.execute(:def, %{mfa: "TestProject.Accounts.get_user/1"}, project_root: @test_project_path)
+      {:ok, result} =
+        Query.execute(:def, %{mfa: "TestProject.Accounts.get_user/1"},
+          project_root: @test_project_path
+        )
 
       assert length(result) == 1
       [def_record] = result
@@ -29,7 +32,10 @@ defmodule Watson.QueryTest do
     end
 
     test "returns empty list for non-existent function" do
-      {:ok, result} = Query.execute(:def, %{mfa: "TestProject.NonExistent.foo/1"}, project_root: @test_project_path)
+      {:ok, result} =
+        Query.execute(:def, %{mfa: "TestProject.NonExistent.foo/1"},
+          project_root: @test_project_path
+        )
 
       assert result == []
     end
@@ -64,7 +70,10 @@ defmodule Watson.QueryTest do
 
   describe "query_schema/2" do
     test "returns Ecto schema by module" do
-      {:ok, result} = Query.execute(:schema, %{module: "TestProject.Accounts.User"}, project_root: @test_project_path)
+      {:ok, result} =
+        Query.execute(:schema, %{module: "TestProject.Accounts.User"},
+          project_root: @test_project_path
+        )
 
       assert length(result) == 1
       [schema] = result
@@ -87,7 +96,8 @@ defmodule Watson.QueryTest do
     end
 
     test "returns empty list for non-existent schema" do
-      {:ok, result} = Query.execute(:schema, %{module: "NonExistent.Schema"}, project_root: @test_project_path)
+      {:ok, result} =
+        Query.execute(:schema, %{module: "NonExistent.Schema"}, project_root: @test_project_path)
 
       assert result == []
     end
@@ -95,7 +105,10 @@ defmodule Watson.QueryTest do
 
   describe "query_refs/2" do
     test "returns call sites for a function" do
-      {:ok, result} = Query.execute(:refs, %{mfa: "TestProject.Accounts.create_user/1"}, project_root: @test_project_path)
+      {:ok, result} =
+        Query.execute(:refs, %{mfa: "TestProject.Accounts.create_user/1"},
+          project_root: @test_project_path
+        )
 
       assert length(result) >= 1
 
@@ -109,7 +122,10 @@ defmodule Watson.QueryTest do
     end
 
     test "returns empty list for function with no references" do
-      {:ok, result} = Query.execute(:refs, %{mfa: "TestProject.NonExistent.foo/1"}, project_root: @test_project_path)
+      {:ok, result} =
+        Query.execute(:refs, %{mfa: "TestProject.NonExistent.foo/1"},
+          project_root: @test_project_path
+        )
 
       assert result == []
     end
@@ -117,7 +133,10 @@ defmodule Watson.QueryTest do
 
   describe "query_callers/3" do
     test "returns direct callers at depth 1" do
-      {:ok, result} = Query.execute(:callers, %{mfa: "TestProject.Accounts.create_user/1", depth: 1}, project_root: @test_project_path)
+      {:ok, result} =
+        Query.execute(:callers, %{mfa: "TestProject.Accounts.create_user/1", depth: 1},
+          project_root: @test_project_path
+        )
 
       # create_user is called by UserController.create
       caller_mfas = Enum.map(result, & &1.mfa)
@@ -129,7 +148,10 @@ defmodule Watson.QueryTest do
 
     test "returns transitive callers at depth 2+" do
       # Repo.insert is called by Accounts.create_user, which is called by UserController.create
-      {:ok, result} = Query.execute(:callers, %{mfa: "TestProject.Repo.insert/1", depth: 3}, project_root: @test_project_path)
+      {:ok, result} =
+        Query.execute(:callers, %{mfa: "TestProject.Repo.insert/1", depth: 3},
+          project_root: @test_project_path
+        )
 
       depths = result |> Enum.map(& &1.depth) |> Enum.uniq() |> Enum.sort()
 
@@ -139,13 +161,19 @@ defmodule Watson.QueryTest do
     end
 
     test "returns empty list for function with no callers" do
-      {:ok, result} = Query.execute(:callers, %{mfa: "TestProject.NonExistent.foo/1", depth: 1}, project_root: @test_project_path)
+      {:ok, result} =
+        Query.execute(:callers, %{mfa: "TestProject.NonExistent.foo/1", depth: 1},
+          project_root: @test_project_path
+        )
 
       assert result == []
     end
 
     test "defaults to depth 1" do
-      {:ok, result} = Query.execute(:callers, %{mfa: "TestProject.Accounts.create_user/1"}, project_root: @test_project_path)
+      {:ok, result} =
+        Query.execute(:callers, %{mfa: "TestProject.Accounts.create_user/1"},
+          project_root: @test_project_path
+        )
 
       # Should return results (default depth = 1)
       assert is_list(result)
@@ -156,7 +184,10 @@ defmodule Watson.QueryTest do
 
   describe "query_callees/3" do
     test "returns direct callees at depth 1" do
-      {:ok, result} = Query.execute(:callees, %{mfa: "TestProject.Accounts.create_user/1", depth: 1}, project_root: @test_project_path)
+      {:ok, result} =
+        Query.execute(:callees, %{mfa: "TestProject.Accounts.create_user/1", depth: 1},
+          project_root: @test_project_path
+        )
 
       # create_user calls User.changeset and Repo.insert
       callee_mfas = Enum.map(result, & &1.mfa)
@@ -169,7 +200,10 @@ defmodule Watson.QueryTest do
     end
 
     test "returns transitive callees at depth 2+" do
-      {:ok, result} = Query.execute(:callees, %{mfa: "TestProjectWeb.UserController.create/2", depth: 2}, project_root: @test_project_path)
+      {:ok, result} =
+        Query.execute(:callees, %{mfa: "TestProjectWeb.UserController.create/2", depth: 2},
+          project_root: @test_project_path
+        )
 
       depths = result |> Enum.map(& &1.depth) |> Enum.uniq() |> Enum.sort()
 
@@ -179,14 +213,20 @@ defmodule Watson.QueryTest do
     end
 
     test "returns empty list for function with no callees" do
-      {:ok, result} = Query.execute(:callees, %{mfa: "TestProject.NonExistent.foo/1", depth: 1}, project_root: @test_project_path)
+      {:ok, result} =
+        Query.execute(:callees, %{mfa: "TestProject.NonExistent.foo/1", depth: 1},
+          project_root: @test_project_path
+        )
 
       assert result == []
     end
 
     test "includes local/private function calls within same module" do
       # CoreComponents.flash calls CoreComponents.icon (same module)
-      {:ok, result} = Query.execute(:callees, %{mfa: "TestProjectWeb.CoreComponents.flash/1", depth: 1}, project_root: @test_project_path)
+      {:ok, result} =
+        Query.execute(:callees, %{mfa: "TestProjectWeb.CoreComponents.flash/1", depth: 1},
+          project_root: @test_project_path
+        )
 
       callee_mfas = Enum.map(result, & &1.mfa)
 
@@ -196,21 +236,30 @@ defmodule Watson.QueryTest do
 
     test "tracks all callers of a private function from multiple call sites" do
       # format_errors/1 is called from both create/2 (line 26) and update/2 (line 40)
-      {:ok, result} = Query.execute(:callers, %{mfa: "TestProjectWeb.API.UserController.format_errors/1", depth: 1}, project_root: @test_project_path)
+      {:ok, result} =
+        Query.execute(
+          :callers,
+          %{mfa: "TestProjectWeb.API.UserController.format_errors/1", depth: 1},
+          project_root: @test_project_path
+        )
 
       caller_mfas = Enum.map(result, & &1.mfa)
 
       # Both create/2 and update/2 should be listed as callers
       assert Enum.any?(caller_mfas, &String.contains?(&1, "create/2")),
-        "Expected create/2 to be a caller, got: #{inspect(caller_mfas)}"
+             "Expected create/2 to be a caller, got: #{inspect(caller_mfas)}"
+
       assert Enum.any?(caller_mfas, &String.contains?(&1, "update/2")),
-        "Expected update/2 to be a caller, got: #{inspect(caller_mfas)}"
+             "Expected update/2 to be a caller, got: #{inspect(caller_mfas)}"
     end
   end
 
   describe "query_impact/2" do
     test "returns affected modules for changed file" do
-      {:ok, result} = Query.execute(:impact, %{files: ["lib/test_project/accounts.ex"]}, project_root: @test_project_path)
+      {:ok, result} =
+        Query.execute(:impact, %{files: ["lib/test_project/accounts.ex"]},
+          project_root: @test_project_path
+        )
 
       assert Map.has_key?(result, :changed_modules)
       assert Map.has_key?(result, :affected_modules)
@@ -225,7 +274,10 @@ defmodule Watson.QueryTest do
 
     test "returns empty affected_modules for file with no dependents" do
       # A leaf module that nothing depends on
-      {:ok, result} = Query.execute(:impact, %{files: ["lib/test_project_web/controllers/page_controller.ex"]}, project_root: @test_project_path)
+      {:ok, result} =
+        Query.execute(:impact, %{files: ["lib/test_project_web/controllers/page_controller.ex"]},
+          project_root: @test_project_path
+        )
 
       # Should still return the structure
       assert Map.has_key?(result, :changed_modules)
@@ -233,7 +285,8 @@ defmodule Watson.QueryTest do
     end
 
     test "handles non-existent files gracefully" do
-      {:ok, result} = Query.execute(:impact, %{files: ["nonexistent.ex"]}, project_root: @test_project_path)
+      {:ok, result} =
+        Query.execute(:impact, %{files: ["nonexistent.ex"]}, project_root: @test_project_path)
 
       assert result.changed_modules == []
       assert result.affected_modules == []

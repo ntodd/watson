@@ -60,4 +60,12 @@ defmodule Watson.Records.Record do
   Creates a line-only span.
   """
   def line_span(line), do: %{line: line}
+
+  @doc """
+  Converts a record with source and confidence to a JSON-serializable map.
+  This is used for rewriting the index during incremental updates.
+  """
+  def to_map(record, source \\ :ast, confidence \\ :high) do
+    wrap(record, source, confidence)
+  end
 end

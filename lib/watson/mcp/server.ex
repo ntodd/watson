@@ -14,7 +14,8 @@ defmodule Watson.MCP.Server do
   @tools [
     %{
       name: "index",
-      description: "Build a searchable code graph for an Elixir/Phoenix project. Run this once before using other tools. The index persists in .watson/ - re-run after code changes to update.",
+      description:
+        "Build a searchable code graph for an Elixir/Phoenix project. Run this once before using other tools. The index persists in .watson/ - re-run after code changes to update.",
       inputSchema: %{
         type: "object",
         properties: %{
@@ -28,13 +29,15 @@ defmodule Watson.MCP.Server do
     },
     %{
       name: "function_definition",
-      description: "Find where a function is defined. Returns file path, line numbers, visibility (public/private), and whether it's a macro.",
+      description:
+        "Find where a function is defined. Returns file path, line numbers, visibility (public/private), and whether it's a macro.",
       inputSchema: %{
         type: "object",
         properties: %{
           mfa: %{
             type: "string",
-            description: "Function in Module.function/arity format, e.g., 'MyApp.Accounts.get_user/1'"
+            description:
+              "Function in Module.function/arity format, e.g., 'MyApp.Accounts.get_user/1'"
           }
         },
         required: ["mfa"]
@@ -42,7 +45,8 @@ defmodule Watson.MCP.Server do
     },
     %{
       name: "function_references",
-      description: "Find all call sites for a function. Returns file, line, and calling function for each location where the function is invoked.",
+      description:
+        "Find all call sites for a function. Returns file, line, and calling function for each location where the function is invoked.",
       inputSchema: %{
         type: "object",
         properties: %{
@@ -56,7 +60,8 @@ defmodule Watson.MCP.Server do
     },
     %{
       name: "function_callers",
-      description: "Find functions that call a given function (traverse up the call graph). Use depth=1 for direct callers, depth=2+ for transitive callers. Good for impact analysis.",
+      description:
+        "Find functions that call a given function (traverse up the call graph). Use depth=1 for direct callers, depth=2+ for transitive callers. Good for impact analysis.",
       inputSchema: %{
         type: "object",
         properties: %{
@@ -74,7 +79,8 @@ defmodule Watson.MCP.Server do
     },
     %{
       name: "function_callees",
-      description: "Find functions called by a given function (traverse down the call graph). Use depth=1 for direct calls, depth=2+ for transitive dependencies.",
+      description:
+        "Find functions called by a given function (traverse down the call graph). Use depth=1 for direct calls, depth=2+ for transitive dependencies.",
       inputSchema: %{
         type: "object",
         properties: %{
@@ -92,7 +98,8 @@ defmodule Watson.MCP.Server do
     },
     %{
       name: "routes",
-      description: "List all Phoenix routes. Returns HTTP verb, path, controller, and action for each endpoint.",
+      description:
+        "List all Phoenix routes. Returns HTTP verb, path, controller, and action for each endpoint.",
       inputSchema: %{
         type: "object",
         properties: %{},
@@ -101,7 +108,8 @@ defmodule Watson.MCP.Server do
     },
     %{
       name: "schema",
-      description: "Get Ecto schema structure: database table, fields with types, and associations (belongs_to, has_many, has_one).",
+      description:
+        "Get Ecto schema structure: database table, fields with types, and associations (belongs_to, has_many, has_one).",
       inputSchema: %{
         type: "object",
         properties: %{
@@ -115,7 +123,8 @@ defmodule Watson.MCP.Server do
     },
     %{
       name: "impact_analysis",
-      description: "Analyze what's affected by changing files. Returns affected modules and suggested test files to run.",
+      description:
+        "Analyze what's affected by changing files. Returns affected modules and suggested test files to run.",
       inputSchema: %{
         type: "object",
         properties: %{
@@ -126,6 +135,46 @@ defmodule Watson.MCP.Server do
           }
         },
         required: ["files"]
+      }
+    },
+    %{
+      name: "function_spec",
+      description:
+        "Get the @spec type signature for a function. Returns parameter types and return type.",
+      inputSchema: %{
+        type: "object",
+        properties: %{
+          mfa: %{
+            type: "string",
+            description:
+              "Function in Module.function/arity format, e.g., 'MyApp.Accounts.create_user/1'"
+          }
+        },
+        required: ["mfa"]
+      }
+    },
+    %{
+      name: "module_types",
+      description: "List all type definitions (@type, @typep, @opaque, @callback) in a module.",
+      inputSchema: %{
+        type: "object",
+        properties: %{
+          module: %{
+            type: "string",
+            description: "Module name, e.g., 'MyApp.Accounts.User'"
+          }
+        },
+        required: ["module"]
+      }
+    },
+    %{
+      name: "type_errors",
+      description:
+        "Get compiler type errors and warnings. Returns diagnostics from the Elixir type checker (Elixir 1.17+) and other compiler warnings.",
+      inputSchema: %{
+        type: "object",
+        properties: %{},
+        required: []
       }
     }
   ]
@@ -225,9 +274,9 @@ defmodule Watson.MCP.Server do
   end
 
   def handle_request(
-         %{"method" => "tools/call", "id" => id, "params" => %{"name" => name} = params},
-         state
-       ) do
+        %{"method" => "tools/call", "id" => id, "params" => %{"name" => name} = params},
+        state
+      ) do
     arguments = Map.get(params, "arguments", %{})
     result = execute_tool(name, arguments, state)
 
@@ -308,38 +357,82 @@ defmodule Watson.MCP.Server do
   end
 
   defp execute_tool("function_definition", %{"mfa" => mfa}, state) do
-    Watson.Query.execute(:def, %{mfa: mfa}, project_root: state.project_path)
+    with :ok <- ensure_index(state.project_path) do
+      Watson.Query.execute(:def, %{mfa: mfa}, project_root: state.project_path)
+    end
   end
 
   defp execute_tool("function_references", %{"mfa" => mfa}, state) do
-    Watson.Query.execute(:refs, %{mfa: mfa}, project_root: state.project_path)
+    with :ok <- ensure_index(state.project_path) do
+      Watson.Query.execute(:refs, %{mfa: mfa}, project_root: state.project_path)
+    end
   end
 
   defp execute_tool("function_callers", args, state) do
     mfa = Map.get(args, "mfa")
     depth = Map.get(args, "depth", 1)
-    Watson.Query.execute(:callers, %{mfa: mfa, depth: depth}, project_root: state.project_path)
+
+    with :ok <- ensure_index(state.project_path) do
+      Watson.Query.execute(:callers, %{mfa: mfa, depth: depth}, project_root: state.project_path)
+    end
   end
 
   defp execute_tool("function_callees", args, state) do
     mfa = Map.get(args, "mfa")
     depth = Map.get(args, "depth", 1)
-    Watson.Query.execute(:callees, %{mfa: mfa, depth: depth}, project_root: state.project_path)
+
+    with :ok <- ensure_index(state.project_path) do
+      Watson.Query.execute(:callees, %{mfa: mfa, depth: depth}, project_root: state.project_path)
+    end
   end
 
   defp execute_tool("routes", _args, state) do
-    Watson.Query.execute(:routes, %{}, project_root: state.project_path)
+    with :ok <- ensure_index(state.project_path) do
+      Watson.Query.execute(:routes, %{}, project_root: state.project_path)
+    end
   end
 
   defp execute_tool("schema", %{"module" => module}, state) do
-    Watson.Query.execute(:schema, %{module: module}, project_root: state.project_path)
+    with :ok <- ensure_index(state.project_path) do
+      Watson.Query.execute(:schema, %{module: module}, project_root: state.project_path)
+    end
   end
 
   defp execute_tool("impact_analysis", %{"files" => files}, state) do
-    Watson.Query.execute(:impact, %{files: files}, project_root: state.project_path)
+    with :ok <- ensure_index(state.project_path) do
+      Watson.Query.execute(:impact, %{files: files}, project_root: state.project_path)
+    end
+  end
+
+  defp execute_tool("function_spec", %{"mfa" => mfa}, state) do
+    with :ok <- ensure_index(state.project_path) do
+      Watson.Query.execute(:spec, %{mfa: mfa}, project_root: state.project_path)
+    end
+  end
+
+  defp execute_tool("module_types", %{"module" => module}, state) do
+    with :ok <- ensure_index(state.project_path) do
+      Watson.Query.execute(:types, %{module: module}, project_root: state.project_path)
+    end
+  end
+
+  defp execute_tool("type_errors", _args, state) do
+    with :ok <- ensure_index(state.project_path) do
+      Watson.Query.execute(:type_errors, %{}, project_root: state.project_path)
+    end
   end
 
   defp execute_tool(name, _args, _state) do
     {:error, "Unknown tool: #{name}"}
+  end
+
+  # Ensures the index is current before executing a query tool
+  defp ensure_index(project_path) do
+    case Watson.Indexer.ensure_index_current(project_path) do
+      {:ok, :current} -> :ok
+      {:ok, :updated, _count} -> :ok
+      {:ok, :created, _count} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
   end
 end

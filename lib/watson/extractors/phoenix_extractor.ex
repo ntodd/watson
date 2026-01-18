@@ -270,7 +270,10 @@ defmodule Watson.Extractors.PhoenixExtractor do
   defp extract_routes_from_node({:forward, _meta, _args}, _context), do: []
 
   # Handle live routes
-  defp extract_routes_from_node({:live, meta, [path, {:__aliases__, _, module_parts} | _]}, context)
+  defp extract_routes_from_node(
+         {:live, meta, [path, {:__aliases__, _, module_parts} | _]},
+         context
+       )
        when is_binary(path) do
     line = Keyword.get(meta, :line, 1)
     module = module_to_string(module_parts)
@@ -313,6 +316,7 @@ defmodule Watson.Extractors.PhoenixExtractor do
   defp get_opt(_, _), do: nil
 
   defp normalize_path("", path), do: normalize_single_path(path)
+
   defp normalize_path(prefix, path) do
     prefix = String.trim_trailing(prefix, "/")
     path = normalize_single_path(path)

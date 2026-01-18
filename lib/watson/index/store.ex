@@ -3,19 +3,27 @@ defmodule Watson.Index.Store do
   Handles reading and writing of index files.
 
   The index is stored as:
-  - `.watson/manifest.json` - Index metadata
+  - `.watson/manifest.json` - Index metadata with file states
   - `.watson/index.jsonl` - JSON Lines format records
   - `.watson/cache/` - Cache directory for compiled data
+
+  ## Manifest Schema v2.0
+
+  The manifest now includes:
+  - `files` - Per-file state for change detection (mtime, size, content_hash, modules)
+  - `module_files` - Module-to-file mapping for dependency tracking
+  - `dependencies` - Dependency graph from xref for computing affected files
   """
 
   alias Watson.Records.Record
+  alias Watson.Index.FileState
 
   @index_dir ".watson"
   @manifest_file "manifest.json"
   @index_file "index.jsonl"
   @cache_dir "cache"
 
-  @schema_version "1.0.0"
+  @schema_version "2.0.0"
 
   @doc """
   Returns the index directory path for the given project root.
@@ -100,9 +108,27 @@ defmodule Watson.Index.Store do
 
   @doc """
   Writes the manifest file.
+
+  ## Options
+
+  - `:file_count` - Number of source files indexed
+  - `:record_count` - Total number of records in the index
+  - `:file_states` - Map of file path to FileState for change detection
+  - `:module_files` - Map of module name to file path
+  - `:dependencies` - Map of module to list of modules it depends on
   """
   def write_manifest(project_root \\ ".", opts \\ []) do
     init(project_root)
+
+    file_states = Keyword.get(opts, :file_states, %{})
+    module_files = Keyword.get(opts, :module_files, %{})
+    dependencies = Keyword.get(opts, :dependencies, %{})
+
+    # Convert FileState structs to maps
+    files_map =
+      file_states
+      |> Enum.map(fn {path, state} -> {path, FileState.to_map(state)} end)
+      |> Map.new()
 
     manifest = %{
       schema_version: @schema_version,
@@ -113,7 +139,10 @@ defmodule Watson.Index.Store do
       indexed_at: DateTime.utc_now() |> DateTime.to_iso8601(),
       project_root: Path.expand(project_root),
       file_count: Keyword.get(opts, :file_count, 0),
-      record_count: Keyword.get(opts, :record_count, 0)
+      record_count: Keyword.get(opts, :record_count, 0),
+      files: files_map,
+      module_files: module_files,
+      dependencies: dependencies
     }
 
     json = Jason.encode!(manifest, pretty: true)
@@ -131,6 +160,105 @@ defmodule Watson.Index.Store do
       {:ok, content} -> Jason.decode(content)
       {:error, _} = error -> error
     end
+  end
+
+  @doc """
+  Returns the current schema version.
+  """
+  def schema_version, do: @schema_version
+
+  @doc """
+  Checks if the manifest schema version is compatible.
+  Returns true if the manifest is from schema version 2.0.0 or later.
+  """
+  def schema_compatible?(project_root \\ ".") do
+    case read_manifest(project_root) do
+      {:ok, manifest} ->
+        version = manifest["schema_version"] || "1.0.0"
+        Version.compare(version, "2.0.0") != :lt
+
+      {:error, _} ->
+        false
+    end
+  end
+
+  @doc """
+  Reads file states from the manifest.
+  Returns a map of file path to FileState struct.
+  """
+  def read_file_states(project_root \\ ".") do
+    case read_manifest(project_root) do
+      {:ok, manifest} ->
+        files = manifest["files"] || %{}
+
+        states =
+          files
+          |> Enum.map(fn {path, data} -> {path, FileState.from_map(path, data)} end)
+          |> Map.new()
+
+        {:ok, states}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  @doc """
+  Reads module-to-file mapping from the manifest.
+  """
+  def read_module_files(project_root \\ ".") do
+    case read_manifest(project_root) do
+      {:ok, manifest} -> {:ok, manifest["module_files"] || %{}}
+      {:error, _} = error -> error
+    end
+  end
+
+  @doc """
+  Reads dependencies from the manifest.
+  """
+  def read_dependencies(project_root \\ ".") do
+    case read_manifest(project_root) do
+      {:ok, manifest} -> {:ok, manifest["dependencies"] || %{}}
+      {:error, _} = error -> error
+    end
+  end
+
+  @doc """
+  Removes records from the index that match the given file paths.
+  Returns the remaining records.
+  """
+  def remove_records_for_files(file_paths, project_root \\ ".") do
+    path_set = MapSet.new(file_paths)
+
+    remaining =
+      stream_records(project_root)
+      |> Stream.reject(fn record ->
+        file = get_in(record, ["data", "file"])
+        file && MapSet.member?(path_set, file)
+      end)
+      |> Enum.to_list()
+
+    {:ok, remaining}
+  end
+
+  @doc """
+  Rewrites the index with the given records, removing old content.
+  """
+  def rewrite_records(records, project_root \\ ".") do
+    init(project_root)
+
+    lines =
+      records
+      |> Enum.map(&record_to_json_line/1)
+      |> Enum.join("\n")
+
+    File.write!(index_path(project_root), lines <> "\n")
+    :ok
+  end
+
+  defp record_to_json_line(record) when is_map(record) do
+    # Already a decoded JSON map, just re-encode
+    Jason.encode!(record)
   end
 
   @doc """

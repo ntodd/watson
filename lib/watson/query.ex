@@ -10,6 +10,9 @@ defmodule Watson.Query do
   - routes
   - schema --module Mod
   - impact --files file1 file2 ...
+  - spec --mfa Mod.fun/arity (Get @spec for a function)
+  - types --module Mod (Get type definitions in a module)
+  - type_errors (Get compiler diagnostics)
   """
 
   alias Watson.Index.Store
@@ -32,6 +35,9 @@ defmodule Watson.Query do
         :routes -> query_routes(project_root)
         :schema -> query_schema(args[:module], project_root)
         :impact -> query_impact(args[:files], project_root)
+        :spec -> query_spec(args[:mfa], project_root)
+        :types -> query_types(args[:module], project_root)
+        :type_errors -> query_type_errors(project_root)
         _ -> {:error, "Unknown query type: #{query_type}"}
       end
     end
@@ -134,6 +140,59 @@ defmodule Watson.Query do
         record["data"]["module"] == module
       end)
       |> Enum.take(1)
+
+    {:ok, result}
+  end
+
+  @doc """
+  Query for @spec of a function by MFA.
+  """
+  def query_spec(mfa, project_root \\ ".") do
+    {module, name, arity} = parse_mfa(mfa)
+
+    result =
+      Store.stream_records(project_root)
+      |> Stream.filter(&(&1["kind"] == "type_spec"))
+      |> Stream.filter(fn record ->
+        data = record["data"]
+
+        data["module"] == module and
+          data["name"] == name and
+          data["arity"] == arity
+      end)
+      |> Enum.take(1)
+
+    {:ok, result}
+  end
+
+  @doc """
+  Query for type definitions in a module.
+  Returns @type, @typep, @opaque, @callback definitions.
+  """
+  def query_types(module, project_root \\ ".") do
+    result =
+      Store.stream_records(project_root)
+      |> Stream.filter(&(&1["kind"] == "type_def"))
+      |> Stream.filter(fn record ->
+        record["data"]["module"] == module
+      end)
+      |> Enum.to_list()
+      |> Enum.sort_by(fn r -> {r["data"]["kind_type"], r["data"]["name"]} end)
+
+    {:ok, result}
+  end
+
+  @doc """
+  Query for compiler type errors and warnings.
+  """
+  def query_type_errors(project_root \\ ".") do
+    result =
+      Store.stream_records(project_root)
+      |> Stream.filter(&(&1["kind"] == "type_diagnostic"))
+      |> Enum.to_list()
+      |> Enum.sort_by(fn r ->
+        {r["data"]["file"], r["data"]["span"]["line"]}
+      end)
 
     {:ok, result}
   end

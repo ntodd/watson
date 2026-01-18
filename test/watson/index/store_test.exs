@@ -53,7 +53,7 @@ defmodule Watson.Index.StoreTest do
 
       {:ok, manifest} = Store.read_manifest(tmp_dir)
 
-      assert manifest["schema_version"] == "1.0.0"
+      assert manifest["schema_version"] == "2.0.0"
       assert manifest["file_count"] == 10
       assert manifest["record_count"] == 100
       assert Map.has_key?(manifest, "elixir_version")
@@ -90,9 +90,10 @@ defmodule Watson.Index.StoreTest do
 
   describe "stream_records/1" do
     test "streams records lazily", %{tmp_dir: tmp_dir} do
-      mods = for i <- 1..5 do
-        ModuleDef.new("MyApp.Mod#{i}", "lib/mod#{i}.ex", 1, 10)
-      end
+      mods =
+        for i <- 1..5 do
+          ModuleDef.new("MyApp.Mod#{i}", "lib/mod#{i}.ex", 1, 10)
+        end
 
       records = Enum.map(mods, &{&1, :ast, :high})
       Store.write_records(records, tmp_dir)

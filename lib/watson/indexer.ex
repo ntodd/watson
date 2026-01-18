@@ -8,16 +8,26 @@ defmodule Watson.Indexer do
   3. Xref - Import dependency edges
   4. Phoenix DSL - Extract routes from router modules
   5. Ecto DSL - Extract schemas from model modules
+
+  ## Incremental Indexing
+
+  The indexer supports incremental updates. When files change, only the affected
+  files are re-indexed rather than rebuilding the entire index.
+
+  Use `ensure_index_current/1` to automatically check for changes and re-index
+  only when necessary.
   """
 
   alias Watson.Extractors.{
     AstExtractor,
     XrefExtractor,
     PhoenixExtractor,
-    EctoExtractor
+    EctoExtractor,
+    TypeExtractor,
+    DiagnosticsExtractor
   }
 
-  alias Watson.Index.Store
+  alias Watson.Index.{Store, FileState, ChangeDetector}
 
   @doc """
   Indexes the Mix project at the given path.
@@ -61,17 +71,52 @@ defmodule Watson.Indexer do
     IO.puts("Phase 5: Ecto schema extraction...")
     schemas = EctoExtractor.extract_schemas(files)
 
+    # Phase 6: Type annotations (@spec, @type, @callback)
+    IO.puts("Phase 6: Type annotation extraction...")
+    type_result = TypeExtractor.extract_files(files)
+
+    # Phase 7: Compiler diagnostics (optional - Elixir 1.15+)
+    diagnostics_result =
+      if DiagnosticsExtractor.available?() do
+        IO.puts("Phase 7: Compiler diagnostics extraction...")
+        DiagnosticsExtractor.extract_project(project_root)
+      else
+        IO.puts("Phase 7: Skipping diagnostics (requires Elixir 1.15+)")
+        %{diagnostics: []}
+      end
+
     # Collect all records
-    all_records = collect_records(ast_result, compiler_result, xref_result, routes, schemas)
+    all_records =
+      collect_records(
+        ast_result,
+        compiler_result,
+        xref_result,
+        routes,
+        schemas,
+        type_result,
+        diagnostics_result
+      )
+
+    # Build file states for change detection
+    file_states = build_file_states(files, ast_result.modules)
+
+    # Build module-to-file mapping
+    module_files = build_module_files(ast_result.modules)
+
+    # Build dependencies from xref edges
+    dependencies = build_dependencies(xref_result.edges || [])
 
     # Write to store
     IO.puts("Writing index...")
     Store.write_records(all_records, project_root)
 
-    # Write manifest
+    # Write manifest with file states and dependencies
     Store.write_manifest(project_root,
       file_count: length(files),
-      record_count: count_records(all_records)
+      record_count: count_records(all_records),
+      file_states: file_states,
+      module_files: module_files,
+      dependencies: dependencies
     )
 
     IO.puts("Index complete!")
@@ -118,11 +163,12 @@ defmodule Watson.Indexer do
       File.rm_rf(project_build)
 
       # Run the tracer
-      {output, exit_code} = System.cmd("elixir", [runner_file],
-        cd: abs_path,
-        env: [{"MIX_ENV", "dev"}],
-        stderr_to_stdout: true
-      )
+      {output, exit_code} =
+        System.cmd("elixir", [runner_file],
+          cd: abs_path,
+          env: [{"MIX_ENV", "dev"}],
+          stderr_to_stdout: true
+        )
 
       # Cleanup temp files
       File.rm(tracer_file)
@@ -136,16 +182,19 @@ defmodule Watson.Indexer do
       case File.read(output_file) do
         {:ok, content} ->
           File.rm(output_file)
+
           case Jason.decode(content) do
             {:ok, data} ->
               calls = Enum.map(data["calls"] || [], &decode_call_ref/1)
               edges = Enum.map(data["edges"] || [], &decode_xref_edge/1)
               IO.puts("  Captured #{length(calls)} calls, #{length(edges)} edges")
               %{calls: calls, edges: edges, compile_envs: []}
+
             {:error, _} ->
               IO.puts("  Warning: Could not parse tracer output")
               %{calls: [], edges: [], compile_envs: []}
           end
+
         {:error, _} ->
           IO.puts("  Warning: No tracer output generated")
           %{calls: [], edges: [], compile_envs: []}
@@ -281,7 +330,9 @@ defmodule Watson.Indexer do
           [_, name] -> String.to_atom(name)
           _ -> :target_project
         end
-      _ -> :target_project
+
+      _ ->
+        :target_project
     end
   end
 
@@ -295,7 +346,15 @@ defmodule Watson.Indexer do
     XrefEdge.new(data["from"], data["to"], String.to_atom(data["type"]))
   end
 
-  defp collect_records(ast_result, compiler_result, xref_result, routes, schemas) do
+  defp collect_records(
+         ast_result,
+         compiler_result,
+         xref_result,
+         routes,
+         schemas,
+         type_result \\ %{specs: [], types: []},
+         diagnostics_result \\ %{diagnostics: []}
+       ) do
     # Non-call AST records (source: :ast, confidence: :high)
     ast_non_call_records =
       [
@@ -326,7 +385,24 @@ defmodule Watson.Indexer do
     # Ecto schemas (source: :ast, confidence: :high)
     schema_records = Enum.map(schemas, &{&1, :ast, :high})
 
-    [ast_non_call_records, deduplicated_calls, compiler_edges, xref_edges, route_records, schema_records]
+    # Type annotations (source: :ast, confidence: :high)
+    type_specs = Enum.map(type_result.specs || [], &{&1, :ast, :high})
+    type_defs = Enum.map(type_result.types || [], &{&1, :ast, :high})
+
+    # Compiler diagnostics (source: :compiler, confidence: :high)
+    diagnostics = Enum.map(diagnostics_result.diagnostics || [], &{&1, :compiler, :high})
+
+    [
+      ast_non_call_records,
+      deduplicated_calls,
+      compiler_edges,
+      xref_edges,
+      route_records,
+      schema_records,
+      type_specs,
+      type_defs,
+      diagnostics
+    ]
     |> List.flatten()
   end
 
@@ -359,5 +435,259 @@ defmodule Watson.Indexer do
     records
     |> List.flatten()
     |> length()
+  end
+
+  # Build file states for change detection
+  defp build_file_states(files, modules) do
+    # Group modules by file
+    modules_by_file =
+      modules
+      |> Enum.group_by(& &1.file)
+      |> Map.new(fn {file, mods} -> {file, Enum.map(mods, & &1.module)} end)
+
+    files
+    |> Enum.reduce(%{}, fn file, acc ->
+      case FileState.from_file(file, Map.get(modules_by_file, file, [])) do
+        {:ok, state} -> Map.put(acc, file, state)
+        {:error, _} -> acc
+      end
+    end)
+  end
+
+  # Build module-to-file mapping
+  defp build_module_files(modules) do
+    modules
+    |> Enum.map(fn mod -> {mod.module, mod.file} end)
+    |> Map.new()
+  end
+
+  # Build dependencies from xref edges
+  defp build_dependencies(edges) do
+    edges
+    |> Enum.reduce(%{}, fn edge, acc ->
+      from = edge.from
+      to = edge.to
+      Map.update(acc, from, [to], fn deps -> [to | deps] end)
+    end)
+    |> Map.new(fn {k, v} -> {k, Enum.uniq(v)} end)
+  end
+
+  @doc """
+  Ensures the index is current, performing incremental updates if needed.
+
+  Returns:
+  - `{:ok, :current}` if the index is up to date
+  - `{:ok, :updated, count}` if the index was updated
+  - `{:ok, :created, count}` if a new index was created
+  - `{:error, reason}` if indexing failed
+  """
+  def ensure_index_current(project_root \\ ".") do
+    cond do
+      # No index exists - do full index
+      not Store.index_exists?(project_root) ->
+        case index(project_root) do
+          {:ok, count} -> {:ok, :created, count}
+          error -> error
+        end
+
+      # Schema version mismatch - do full index
+      not Store.schema_compatible?(project_root) ->
+        case index(project_root) do
+          {:ok, count} -> {:ok, :created, count}
+          error -> error
+        end
+
+      # Check for changes
+      true ->
+        check_and_update(project_root)
+    end
+  end
+
+  defp check_and_update(project_root) do
+    with {:ok, stored_states} <- Store.read_file_states(project_root),
+         {:ok, dependencies} <- Store.read_dependencies(project_root),
+         {:ok, module_files} <- Store.read_module_files(project_root) do
+      current_files = find_source_files(project_root)
+
+      changes = ChangeDetector.detect(current_files, stored_states, dependencies, module_files)
+
+      if ChangeDetector.has_changes?(changes) do
+        incremental_index(project_root, changes)
+      else
+        {:ok, :current}
+      end
+    else
+      {:error, _} ->
+        # Can't read manifest - do full index
+        case index(project_root) do
+          {:ok, count} -> {:ok, :created, count}
+          error -> error
+        end
+    end
+  end
+
+  @doc """
+  Performs an incremental index based on detected changes.
+  """
+  def incremental_index(project_root, changes) do
+    try do
+      do_incremental_index(project_root, changes)
+    rescue
+      e ->
+        {:error, "Incremental indexing failed: #{Exception.message(e)}"}
+    end
+  end
+
+  defp do_incremental_index(project_root, changes) do
+    files_to_remove = ChangeDetector.files_to_remove(changes)
+    files_to_reindex = ChangeDetector.files_to_reindex(changes)
+
+    if files_to_reindex == [] and files_to_remove == [] do
+      {:ok, :current}
+    else
+      IO.puts(
+        "Incremental index: #{length(files_to_reindex)} files to update, #{length(changes.deleted)} deleted"
+      )
+
+      # Remove old records for changed/deleted files
+      {:ok, remaining_records} = Store.remove_records_for_files(files_to_remove, project_root)
+
+      # Extract new records from changed files
+      if files_to_reindex != [] do
+        # Phase 1: AST extraction for changed files
+        ast_result = AstExtractor.extract_files(files_to_reindex)
+
+        # Phase 4: Phoenix routes (check if router files changed)
+        routes = PhoenixExtractor.extract_routes(files_to_reindex)
+
+        # Phase 5: Ecto schemas
+        schemas = EctoExtractor.extract_schemas(files_to_reindex)
+
+        # Collect new records (without compiler tracing for speed)
+        new_records =
+          collect_records(
+            ast_result,
+            %{calls: [], edges: [], compile_envs: []},
+            %{calls: [], edges: []},
+            routes,
+            schemas
+          )
+
+        # Write combined records
+        all_records = remaining_records ++ format_records_for_write(new_records)
+        Store.rewrite_records(all_records, project_root)
+
+        # Update manifest with new file states
+        all_files = find_source_files(project_root)
+        {:ok, old_states} = Store.read_file_states(project_root)
+        {:ok, old_module_files} = Store.read_module_files(project_root)
+        {:ok, old_dependencies} = Store.read_dependencies(project_root)
+
+        # Update file states for changed files
+        new_states =
+          files_to_reindex
+          |> Enum.reduce(old_states, fn file, acc ->
+            modules_in_file =
+              ast_result.modules
+              |> Enum.filter(&(&1.file == file))
+              |> Enum.map(& &1.module)
+
+            case FileState.from_file(file, modules_in_file) do
+              {:ok, state} -> Map.put(acc, file, state)
+              {:error, _} -> Map.delete(acc, file)
+            end
+          end)
+
+        # Remove states for deleted files
+        new_states =
+          Enum.reduce(changes.deleted, new_states, fn file, acc ->
+            Map.delete(acc, file)
+          end)
+
+        # Update module files
+        new_module_files =
+          ast_result.modules
+          |> Enum.reduce(old_module_files, fn mod, acc ->
+            Map.put(acc, mod.module, mod.file)
+          end)
+
+        # Remove deleted modules from module_files
+        deleted_modules =
+          changes.deleted
+          |> Enum.flat_map(fn file ->
+            case Map.get(old_states, file) do
+              nil -> []
+              state -> state.modules
+            end
+          end)
+
+        new_module_files =
+          Enum.reduce(deleted_modules, new_module_files, fn mod, acc ->
+            Map.delete(acc, mod)
+          end)
+
+        Store.write_manifest(project_root,
+          file_count: length(all_files),
+          record_count: length(all_records),
+          file_states: new_states,
+          module_files: new_module_files,
+          dependencies: old_dependencies
+        )
+
+        {:ok, :updated, length(new_records)}
+      else
+        # Only deletions
+        Store.rewrite_records(remaining_records, project_root)
+
+        {:ok, old_states} = Store.read_file_states(project_root)
+        {:ok, old_module_files} = Store.read_module_files(project_root)
+        {:ok, old_dependencies} = Store.read_dependencies(project_root)
+
+        # Remove states for deleted files
+        new_states =
+          Enum.reduce(changes.deleted, old_states, fn file, acc ->
+            Map.delete(acc, file)
+          end)
+
+        # Remove deleted modules
+        deleted_modules =
+          changes.deleted
+          |> Enum.flat_map(fn file ->
+            case Map.get(old_states, file) do
+              nil -> []
+              state -> state.modules
+            end
+          end)
+
+        new_module_files =
+          Enum.reduce(deleted_modules, old_module_files, fn mod, acc ->
+            Map.delete(acc, mod)
+          end)
+
+        all_files = find_source_files(project_root)
+
+        Store.write_manifest(project_root,
+          file_count: length(all_files),
+          record_count: length(remaining_records),
+          file_states: new_states,
+          module_files: new_module_files,
+          dependencies: old_dependencies
+        )
+
+        {:ok, :updated, 0}
+      end
+    end
+  end
+
+  defp format_records_for_write(records) do
+    records
+    |> List.flatten()
+    |> Enum.map(fn
+      {record, source, confidence} ->
+        Watson.Records.Record.to_map(record, source, confidence)
+
+      record ->
+        Watson.Records.Record.to_map(record, :ast, :high)
+    end)
   end
 end

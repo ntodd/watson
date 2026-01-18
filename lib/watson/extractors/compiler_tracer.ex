@@ -247,7 +247,16 @@ defmodule Watson.Extractors.CompilerTracer do
   def events_to_records(events) do
     calls =
       events
-      |> Enum.filter(&(&1.type in [:remote_call, :remote_macro, :imported_call, :imported_macro, :local_call, :local_macro]))
+      |> Enum.filter(
+        &(&1.type in [
+            :remote_call,
+            :remote_macro,
+            :imported_call,
+            :imported_macro,
+            :local_call,
+            :local_macro
+          ])
+      )
       |> Enum.map(&event_to_call_ref/1)
       |> Enum.reject(&is_nil/1)
 
